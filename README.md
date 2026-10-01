@@ -4,7 +4,9 @@
 
 > Работа для второго этапа отбора **Narxoz Incubator 2026** (задание «Асық ату»).
 >
-> 🔗 **Играть:** _ссылка на опубликованную версию — см. раздел [Deployment](#deployment)_
+> 🎮 **Играть:** https://mejrbekovalibek103-netizen.github.io/Asyk-Atu/
+>
+> 📦 **Исходный код:** https://github.com/mejrbekovalibek103-netizen/Asyk-Atu
 
 ---
 
@@ -208,7 +210,9 @@ npm run preview   # локальный просмотр production-сборки
 
 Сборка — статические файлы (`dist/`), бэкенд не нужен. `vite.config.ts` использует `base: './'`, поэтому сборка работает на любом статическом хостинге и в подпапке.
 
-**GitHub Pages (настроено):**
+Опубликовано на **GitHub Pages**: https://mejrbekovalibek103-netizen.github.io/Asyk-Atu/ — каждый push в `main` автоматически пересобирает и обновляет игру.
+
+**GitHub Pages (как настроено):**
 
 1. Создать репозиторий на GitHub и запушить код в ветку `main`.
 2. В репозитории: **Settings → Pages → Source: GitHub Actions**.
