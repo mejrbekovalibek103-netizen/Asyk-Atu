@@ -1,0 +1,107 @@
+import { POINTS } from '../../game/scoring/scoring';
+import { AsykIcon } from '../components/AsykIcon';
+import { Icon } from '../components/Icon';
+import { Ornament } from '../components/Ornament';
+import type { Route } from '../routes';
+
+const STEPS = [
+  { t: 'Возьми сақа', d: 'Зажми красный сақа в руке внизу экрана (мышью или пальцем).' },
+  { t: 'Прицелься', d: 'Не отпуская, тяни к асыкам. Направление броска — от руки к курсору/пальцу.' },
+  { t: 'Выбери силу', d: 'Чем дальше тянешь, тем сильнее бросок. Шкала «Сила» и длина пунктира это показывают.' },
+  { t: 'Брось', d: 'Отпусти — сақа полетит и заскользит по асфальту. Кружок — где он остановится, если ни во что не врежется.' },
+  { t: 'Столкновение', d: 'Сақа тяжелее асыка: при ударе передаёт ему скорость, асыки могут сбивать друг друга по цепочке.' },
+  { t: 'Выбей за линию', d: 'Асык выбит, когда больше половины его вылетело за меловую линию кона. Каждый засчитывается один раз.' },
+  { t: 'Итог', d: 'Когда броски закончились или кон пуст — раунд завершён. Цель испытания даёт 1★, дополнительные условия — 2★ и 3★.' },
+];
+
+export function HowToScreen({ onNavigate, onBack }: { onNavigate: (r: Route) => void; onBack: () => void }) {
+  return (
+    <main className="page page--doc">
+      <div className="doc">
+        <button className="back-btn" onClick={onBack}>
+          <Icon name="back" /> Назад
+        </button>
+        <h1 className="doc__title">Как играть</h1>
+        <p className="doc__lead">Три действия: прицелься, выбери силу, брось. Всё остальное делает физика.</p>
+
+        <ol className="steps">
+          {STEPS.map((s, i) => (
+            <li key={s.t} className="step">
+              <span className="step__num">{i + 1}</span>
+              <div>
+                <h3>{s.t}</h3>
+                <p>{s.d}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+
+        <section className="doc__section">
+          <h2>Очки</h2>
+          <table className="points-table">
+            <tbody>
+              <tr>
+                <td>
+                  <AsykIcon size={26} /> Выбитый асык
+                </td>
+                <td>+{POINTS.asyk}</td>
+              </tr>
+              <tr>
+                <td>
+                  <AsykIcon size={26} palette="target" /> Синий асык («Мерген»)
+                </td>
+                <td>+{POINTS.target}</td>
+              </tr>
+              <tr>
+                <td>Комбо: несколько асыков одним броском</td>
+                <td>+{POINTS.comboPerExtra} за каждый дополнительный</td>
+              </tr>
+              <tr>
+                <td>Серия: результативные броски подряд</td>
+                <td>
+                  +{POINTS.streakStep}, +{POINTS.streakStep * 2}, … (до +{POINTS.streakMax})
+                </td>
+              </tr>
+              <tr>
+                <td>«Таза кон»: весь кон очищен досрочно</td>
+                <td>+{POINTS.cleanPerThrow} за каждый оставшийся бросок</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section className="doc__section">
+          <h2>Управление</h2>
+          <ul className="bullets">
+            <li>
+              <b>Мышь / палец:</b> зажми руку с сақа → тяни → отпусти. Потянул назад к руке — бросок отменяется, попытка не тратится.
+            </li>
+            <li>
+              <b>Клавиатура:</b> ← → — направление (Shift — быстрее), ↑ ↓ — сила, Пробел/Enter — бросок, Esc — отмена или пауза.
+            </li>
+            <li>
+              <b>Рука немного дрожит:</b> у броска есть небольшой разброс (меньше 1°), как у живого игрока. Результат всегда определяется
+              направлением, силой и физикой столкновений.
+            </li>
+          </ul>
+        </section>
+
+        <section className="doc__section doc__note">
+          <Ornament className="doc__ornament" />
+          <h2>Это цифровая адаптация</h2>
+          <p>
+            Во дворе в асық ату играют по-разному: с разными расстановками, очерёдностью ходов и правилами «кто забирает асыки».
+            Здесь правила упрощены для браузера: одиночная игра, ограниченное число бросков, вид сверху, а асык считается выбитым,
+            когда пересёк меловую линию кона. Уровни, обучение, комбо, серии и звёзды — авторские дополнения этой версии.
+          </p>
+        </section>
+
+        <div className="doc__actions">
+          <button className="btn btn--primary btn--xl" onClick={() => onNavigate({ name: 'LEVEL_SELECT' })}>
+            <Icon name="play" /> Играть
+          </button>
+        </div>
+      </div>
+    </main>
+  );
+}

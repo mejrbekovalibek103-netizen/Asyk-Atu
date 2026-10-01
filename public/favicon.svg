@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="16" fill="#1fa9c9"/>
+  <g transform="translate(32 33) rotate(-18)">
+    <path d="M -14.85 -19.00 C -5.40 -13.68 5.40 -13.68 14.85 -19.00 C 25.65 -21.28 29.16 -8.55 25.11 0.00 C 29.16 8.55 25.65 21.28 14.85 19.00 C 5.40 13.68 -5.40 13.68 -14.85 19.00 C -25.65 21.28 -29.16 8.55 -25.11 0.00 C -29.16 -8.55 -25.65 -21.28 -14.85 -19.00 Z" transform="scale(0.78)" fill="#d4442b" stroke="#7a1d12" stroke-width="2"/>
+    <ellipse cx="-7" cy="-6" rx="8" ry="3.5" fill="#fff" opacity="0.35"/>
+  </g>
+</svg>
