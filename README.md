@@ -2,8 +2,6 @@
 
 **Прицелься. Брось. Выбей асық.** — 2D браузерная игра на меткость по мотивам традиционной казахской игры.
 
-> Работа для второго этапа отбора **Narxoz Incubator 2026** (задание «Асық ату»).
->
 > 🎮 **Играть:** https://mejrbekovalibek103-netizen.github.io/Asyk-Atu/
 >
 > 📦 **Исходный код:** https://github.com/mejrbekovalibek103-netizen/Asyk-Atu
