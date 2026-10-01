@@ -80,8 +80,9 @@ export function drawZone(ctx: CanvasRenderingContext2D, zone: Zone, rnd: () => n
     );
   }
   // подпись «КОН» мелом
-  const lx = zone.kind === 'rect' ? zone.x + 8 : zone.cx - zone.r * 0.72;
-  const ly = zone.kind === 'rect' ? zone.y - 12 : zone.cy - zone.r * 0.8;
+  // подпись снаружи линии, чтобы не лежать под асыками
+  const lx = zone.kind === 'rect' ? zone.x + 8 : zone.cx - 34;
+  const ly = zone.kind === 'rect' ? zone.y - 12 : zone.cy - zone.r - 14;
   ctx.font = '700 22px Unbounded Variable, system-ui, sans-serif';
   ctx.fillStyle = 'rgba(252, 250, 244, 0.55)';
   ctx.fillText('КОН', lx, ly);
