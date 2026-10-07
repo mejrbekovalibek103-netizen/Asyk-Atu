@@ -106,7 +106,7 @@ function skinFill(ctx: CanvasRenderingContext2D, x0: number, x1: number): Canvas
 }
 
 /** Предплечье, браслет и тыльная сторона ладони (под сақа). */
-export function drawHandBack(ctx: CanvasRenderingContext2D): void {
+export function drawHandBack(ctx: CanvasRenderingContext2D, braceletColor = '#c8372d'): void {
   ctx.save();
   ctx.lineJoin = 'round';
 
@@ -121,7 +121,7 @@ export function drawHandBack(ctx: CanvasRenderingContext2D): void {
   ctx.save();
   ctx.beginPath();
   ctx.roundRect(-36, 116, 74, 14, 7);
-  ctx.fillStyle = '#c8372d';
+  ctx.fillStyle = braceletColor;
   ctx.fill();
   ctx.clip();
   ctx.strokeStyle = 'rgba(255,255,255,0.75)';

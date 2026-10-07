@@ -1,11 +1,11 @@
 import { THROW_ORIGIN } from '../../game/config';
 import { asykPathD } from '../../game/render/asykShape';
-import type { LevelConfig } from '../../game/types';
+import type { KonLayout } from '../../game/types';
 
 const PATH = asykPathD(54, 38);
 
 /** Мини-схема расстановки — строится из той же конфигурации, что и игра. */
-export function LevelPreview({ level }: { level: LevelConfig }) {
+export function LevelPreview({ level }: { level: KonLayout }) {
   const z = level.zone;
   // кадрируем область кона и руки
   const vb = { x: 100, y: 200, w: 600, h: 920 };

@@ -1,14 +1,14 @@
 import { sound } from '../audio/sound';
 import { KNOCKOUT_FADE_MS, PHYS, RELEASE_DELAY_MS, RESOLVE_PAUSE_MS, THROW_LINE_Y, THROW_ORIGIN } from '../config';
 import { AimInput, type InputTarget } from '../input/AimInput';
-import { zoneCenter, zoneEdgePoint } from '../levels/zone';
+import { zoneCenter } from '../levels/zone';
 import { aimDirection, aimFromAnglePower, aimFromPoint, throwParams, type Aim, type ThrowParams } from '../physics/aim';
 import { PhysicsWorld, type ContactEvent, type Piece } from '../physics/PhysicsWorld';
+import type { AsykPalette } from '../render/asykShape';
 import { Effects } from '../render/effects';
 import { Renderer, type HandAnim, type SceneView } from '../render/Renderer';
-import { computeStars, isGoalMet, ScoreKeeper } from '../scoring/scoring';
-import type { HudMessage, HudSnapshot, LevelConfig, Phase, RoundResult, ThrowSummary, TutorialStep, Vec2 } from '../types';
-import { plural } from '../../ui/format';
+import type { Rules, RulesHost } from '../rules/Rules';
+import type { HudMessage, HudSnapshot, KonLayout, Phase, TutorialStep, Vec2 } from '../types';
 
 /**
  * Разрешённые переходы между фазами. Любой другой переход игнорируется —
@@ -23,14 +23,15 @@ const TRANSITIONS: Record<Phase, readonly Phase[]> = {
 };
 
 export interface EngineOptions {
-  level: LevelConfig;
+  layout: KonLayout;
+  /** Правила режима: одиночное испытание или матч. */
+  rules: Rules;
   /** Первый запуск: пробный бросок с подсказками. */
   tutorial: boolean;
   reducedMotion: boolean;
 }
 
 export interface EngineCallbacks {
-  onRoundComplete(result: RoundResult): void;
   onTutorialDone?(): void;
   onPauseRequest?(): void;
 }
@@ -42,9 +43,13 @@ interface Task {
 
 const GRAB_RADIUS = 150;
 
-export class GameEngine implements SceneView, InputTarget {
-  // ——— SceneView ———
-  readonly level: LevelConfig;
+/**
+ * Игровой движок: цикл, физика, ввод, анимация руки, рендер и фазы броска.
+ * Счёт, очередь ходов и конец игры решают правила (`Rules`).
+ */
+export class GameEngine implements SceneView, InputTarget, RulesHost {
+  // ——— SceneView / RulesHost ———
+  readonly layout: KonLayout;
   phase: Phase = 'READY';
   aim: Aim | null = null;
   hoverGrab = false;
@@ -57,24 +62,22 @@ export class GameEngine implements SceneView, InputTarget {
 
   // ——— внутреннее состояние ———
   private physics: PhysicsWorld;
-  private scorer = new ScoreKeeper();
+  private readonly rules: Rules;
   private readonly renderer: Renderer;
   private readonly input: AimInput;
   private aimSource: 'pointer' | 'keyboard' | null = null;
   private lastAngle = 0;
   private lastPower = 0.6;
-  private throwsUsed = 0;
-  /** Номер текущего броска (1…); 0 — пробный бросок обучения. */
+  /** Номер текущего броска (его выдают правила при запуске). */
   private currentThrow = 0;
   private launched = false;
-  private knockedThisThrow = 0;
   private settledFor = 0;
-  private practice: boolean;
+  /** Обучение ещё не пройдено (пробный бросок впереди). */
+  private tutorialPending: boolean;
   private tutorialStep: TutorialStep | null;
   private paused = false;
   private tasks: Task[] = [];
   private release: { at: number; from: number } | null = null;
-  private lastThrow: ThrowSummary | null = null;
   private message: HudMessage | null = null;
   private msgId = 0;
   private waitHintShown = false;
@@ -89,14 +92,16 @@ export class GameEngine implements SceneView, InputTarget {
   constructor(
     canvas: HTMLCanvasElement,
     opts: EngineOptions,
-    private readonly cb: EngineCallbacks,
+    private readonly cb: EngineCallbacks = {},
   ) {
-    this.level = opts.level;
-    this.practice = opts.tutorial;
+    this.layout = opts.layout;
+    this.rules = opts.rules;
+    this.tutorialPending = opts.tutorial;
     this.tutorialStep = opts.tutorial ? 'grab' : null;
     this.effects = new Effects(opts.reducedMotion);
-    this.renderer = new Renderer(canvas, this.level);
+    this.renderer = new Renderer(canvas, this.layout);
     this.physics = this.buildWorld();
+    this.rules.attach(this);
     this.input = new AimInput(canvas, (x, y) => this.renderer.screenToWorld(x, y), this);
     this.snapshot = this.buildSnapshot();
     // шрифты для надписей мелом на фоне
@@ -108,6 +113,7 @@ export class GameEngine implements SceneView, InputTarget {
   start(): void {
     this.lastNow = performance.now();
     this.raf = requestAnimationFrame(this.frame);
+    this.rules.onStart();
   }
 
   destroy(): void {
@@ -132,27 +138,31 @@ export class GameEngine implements SceneView, InputTarget {
     this.emit();
   }
 
-  /** Перезапуск раунда в любой момент (в том числе во время движения физики). */
+  /** Перезапуск раунда/матча в любой момент (в том числе во время движения физики). */
   restart(): void {
+    this.resetWorld();
+    this.rules.onStart();
+    this.emit();
+  }
+
+  private resetWorld(): void {
     this.tasks = []; // отменяем все отложенные действия старого раунда
     this.release = null;
     this.physics.destroy();
     this.physics = this.buildWorld();
-    this.scorer = new ScoreKeeper();
-    this.throwsUsed = 0;
+    this.rules.reset();
     this.currentThrow = 0;
     this.launched = false;
-    this.lastThrow = null;
     this.aim = null;
     this.aimSource = null;
     this.trail = [];
+    this.message = null;
     this.effects.clear();
     this.hand = { offset: 0, angle: 0, open: 0, sakaInHand: true, reload: 0 };
     this.phase = 'READY';
     this.paused = false;
-    if (this.practice) this.tutorialStep = 'grab';
+    this.tutorialStep = this.tutorialPending ? 'grab' : null;
     this.input.reset();
-    this.emit();
   }
 
   // ——— подписка для React (useSyncExternalStore) ———
@@ -174,6 +184,40 @@ export class GameEngine implements SceneView, InputTarget {
     return this.physics.time;
   }
 
+  get sakaPalette(): AsykPalette {
+    return this.rules.sakaPalette();
+  }
+
+  get braceletColor(): string {
+    return this.rules.braceletColor();
+  }
+
+  // ——— RulesHost ———
+
+  asyksLeft(): number {
+    return this.physics.asyksIn().length;
+  }
+
+  zoneCenter(): Vec2 {
+    return zoneCenter(this.layout.zone);
+  }
+
+  schedule(ms: number, fn: () => void): void {
+    this.tasks.push({ at: this.clock + ms, fn });
+  }
+
+  say(text: string, tone: HudMessage['tone'], ms = 1800): void {
+    const id = ++this.msgId;
+    this.message = { id, text, tone };
+    this.schedule(ms, () => {
+      if (this.message?.id === id) {
+        this.message = null;
+        this.emit();
+      }
+    });
+    this.emit();
+  }
+
   // ——— InputTarget ———
 
   pointerDown(p: Vec2): boolean {
@@ -184,6 +228,10 @@ export class GameEngine implements SceneView, InputTarget {
         this.waitHintShown = true;
         this.say('Дождись, пока всё остановится', 'info', 1200);
       }
+      return false;
+    }
+    if (!this.rules.canThrow()) {
+      this.say(this.rules.blockedHint(), 'info', 1600);
       return false;
     }
     if (!this.inGrabArea(p)) {
@@ -202,7 +250,7 @@ export class GameEngine implements SceneView, InputTarget {
 
   pointerMove(p: Vec2, pressed: boolean): void {
     if (!pressed) {
-      const hover = this.phase === 'READY' && !this.paused && this.inGrabArea(p);
+      const hover = this.phase === 'READY' && !this.paused && this.rules.canThrow() && this.inGrabArea(p);
       if (hover !== this.hoverGrab) this.hoverGrab = hover;
       return;
     }
@@ -225,6 +273,7 @@ export class GameEngine implements SceneView, InputTarget {
   keyAim(dAngle: number, dPower: number): void {
     if (this.paused) return;
     if (this.phase === 'READY') {
+      if (!this.rules.canThrow()) return;
       if (!this.setPhase('AIMING')) return;
       this.aimSource = 'keyboard';
       this.aim = aimFromAnglePower(this.lastAngle, this.lastPower);
@@ -296,7 +345,9 @@ export class GameEngine implements SceneView, InputTarget {
 
     if (this.phase !== 'THROWING' || !this.launched) return;
 
-    for (const p of this.physics.checkKnockouts(this.level.zone, this.currentThrow)) this.onKnockout(p);
+    const out = this.physics.checkKnockouts(this.layout.zone, this.currentThrow);
+    for (const p of out) this.rules.onKnockout(p, this.currentThrow);
+    if (out.length) this.emit();
 
     if (this.physics.isSettled()) {
       this.settledFor += PHYS.stepMs;
@@ -336,9 +387,7 @@ export class GameEngine implements SceneView, InputTarget {
 
   private launch(params: ThrowParams): void {
     if (this.phase !== 'THROWING' || this.launched) return;
-    if (!this.practice) this.throwsUsed += 1;
-    this.currentThrow = this.practice ? 0 : this.throwsUsed;
-    this.knockedThisThrow = 0;
+    this.currentThrow = this.rules.onLaunch();
     this.settledFor = 0;
     this.physics.launchSaka(THROW_ORIGIN, params.angle, params.speed, params.spin);
     this.sakaLaunchedAt = this.physics.time;
@@ -367,36 +416,7 @@ export class GameEngine implements SceneView, InputTarget {
     if (this.phase !== 'THROWING') return;
     if (!this.setPhase('RESOLVING')) return;
     this.trail = [];
-    const ts = this.scorer.resolveThrow(this.currentThrow);
-    if (ts) {
-      this.lastThrow = {
-        index: ts.throwIndex,
-        knocked: ts.knocked,
-        points: ts.points,
-        comboBonus: ts.comboBonus,
-        streakBonus: ts.streakBonus,
-        streak: ts.streak,
-        targetKnocked: ts.targetKnocked,
-        practice: this.practice,
-      };
-      const c = zoneCenter(this.level.zone);
-      if (ts.knocked === 0) {
-        this.say('Мимо! Целься точнее или бросай сильнее', 'warn');
-        sound.miss();
-      } else if (ts.comboBonus > 0) {
-        this.effects.popup(c.x, c.y - 40, `КОМБО ×${ts.knocked}  +${ts.comboBonus}`, '#ffb13b', 40, 1500);
-        this.say(`Комбо! ${ts.knocked} ${plural(ts.knocked, ['асык', 'асыка', 'асыков'])} одним броском`, 'good');
-        sound.bonus();
-      } else if (ts.targetKnocked) {
-        this.say('Синий асык выбит!', 'good');
-      } else {
-        this.say(`Выбит ${ts.knocked} ${plural(ts.knocked, ['асык', 'асыка', 'асыков'])}`, 'good', 1400);
-      }
-      if (ts.streakBonus > 0) {
-        this.effects.popup(c.x, c.y + 10, `СЕРИЯ ×${ts.streak}  +${ts.streakBonus}`, '#9be15d', 32, 1500);
-        if (ts.comboBonus === 0) sound.bonus();
-      }
-    }
+    this.rules.onSettled(this.currentThrow);
     this.emit();
     this.schedule(RESOLVE_PAUSE_MS, () => this.afterResolve());
   }
@@ -407,64 +427,26 @@ export class GameEngine implements SceneView, InputTarget {
     if (saka) this.effects.dust(saka.body.position.x, saka.body.position.y, 3, 'rgba(230,220,200,1)');
     this.physics.removeSaka();
 
-    if (this.practice) {
-      // пробный бросок обучения не считается: возвращаем кон в исходное состояние
-      this.practice = false;
-      this.tutorialStep = null;
-      this.restart();
-      this.say(`Отлично! Теперь по-настоящему: ${this.level.throws} ${plural(this.level.throws, ['бросок', 'броска', 'бросков'])}`, 'good', 2600);
-      this.cb.onTutorialDone?.();
-      return;
+    const step = this.rules.next();
+    switch (step.kind) {
+      case 'reset':
+        // пробный бросок обучения не считается: возвращаем кон в исходное состояние
+        this.tutorialPending = false;
+        this.resetWorld();
+        this.say(step.message, 'good', 2600);
+        this.cb.onTutorialDone?.();
+        break;
+      case 'finish':
+        if (!this.setPhase('ROUND_COMPLETE')) return;
+        this.rules.onFinish();
+        break;
+      case 'continue':
+        this.setPhase('READY');
+        this.hand.sakaInHand = true;
+        this.hand.reload = 0;
+        break;
     }
-
-    const cleared = this.physics.asyksIn().length === 0;
-    const remaining = this.level.throws - this.throwsUsed;
-    if (cleared || remaining <= 0) {
-      this.finishRound(cleared, remaining);
-      return;
-    }
-    this.setPhase('READY');
-    this.hand.sakaInHand = true;
-    this.hand.reload = 0;
     this.emit();
-  }
-
-  private finishRound(cleared: boolean, remaining: number): void {
-    if (!this.setPhase('ROUND_COMPLETE')) return;
-    const clean = this.scorer.finishRound(remaining, cleared);
-    if (clean > 0) {
-      const c = zoneCenter(this.level.zone);
-      this.effects.popup(c.x, c.y, `ТАЗА КОН!  +${clean}`, '#ffd84d', 42, 1800);
-      this.say(`Таза кон! Бонус за ${remaining} ${plural(remaining, ['бросок', 'броска', 'бросков'])}`, 'good');
-      sound.bonus();
-    }
-    const s = this.scorer;
-    const input = {
-      knocked: s.knocked,
-      totalAsyks: this.level.asyks.length,
-      score: s.score,
-      cleared,
-      targetThrow: s.targetThrow,
-    };
-    const result: RoundResult = {
-      levelId: this.level.id,
-      score: s.score,
-      knocked: s.knocked,
-      totalAsyks: this.level.asyks.length,
-      throwsUsed: this.throwsUsed,
-      throwsTotal: this.level.throws,
-      cleared,
-      cleanBonus: clean,
-      targetOut: s.targetThrow !== null,
-      targetThrow: s.targetThrow,
-      bestCombo: s.bestCombo,
-      hitThrows: s.hitThrows,
-      passed: isGoalMet(this.level, input),
-      stars: computeStars(this.level, input),
-    };
-    sound.roundEnd(result.passed);
-    this.emit();
-    this.schedule(clean > 0 ? 1300 : 700, () => this.cb.onRoundComplete(result));
   }
 
   // ——— события физики ———
@@ -479,17 +461,6 @@ export class GameEngine implements SceneView, InputTarget {
     sound.clack(c.impact, heavy);
     if (c.impact > 1.2) this.effects.dust(c.x, c.y, c.impact * (heavy ? 1 : 0.6));
     if (heavy && c.impact > 7) this.effects.addShake(0.35);
-  }
-
-  private onKnockout(p: Piece): void {
-    const pts = this.scorer.registerKnockout(p.id, p.kind === 'target', this.currentThrow);
-    if (pts <= 0) return;
-    this.knockedThisThrow += 1;
-    const pos = p.body.position;
-    this.effects.chalkBurst(zoneEdgePoint(this.level.zone, pos));
-    this.effects.popup(pos.x, pos.y - 24, `+${pts}`, p.kind === 'target' ? '#7fd9ee' : '#ffd84d', p.kind === 'target' ? 40 : 34);
-    sound.knockout(this.knockedThisThrow);
-    this.emit();
   }
 
   // ——— анимация руки ———
@@ -547,7 +518,7 @@ export class GameEngine implements SceneView, InputTarget {
 
   private buildWorld(): PhysicsWorld {
     const w = new PhysicsWorld();
-    w.addAsyks(this.level.asyks);
+    w.addAsyks(this.layout.asyks);
     return w;
   }
 
@@ -570,10 +541,6 @@ export class GameEngine implements SceneView, InputTarget {
     return true;
   }
 
-  private schedule(ms: number, fn: () => void): void {
-    this.tasks.push({ at: this.clock + ms, fn });
-  }
-
   private runTasks(): void {
     if (!this.tasks.length) return;
     const due = this.tasks.filter((t) => t.at <= this.clock);
@@ -582,39 +549,15 @@ export class GameEngine implements SceneView, InputTarget {
     for (const t of due) t.fn();
   }
 
-  private say(text: string, tone: HudMessage['tone'], ms = 1800): void {
-    const id = ++this.msgId;
-    this.message = { id, text, tone };
-    this.schedule(ms, () => {
-      if (this.message?.id === id) {
-        this.message = null;
-        this.emit();
-      }
-    });
-    this.emit();
-  }
-
   private buildSnapshot(): HudSnapshot {
-    const s = this.scorer;
-    const hasTarget = this.level.asyks.some((a) => a.kind === 'target');
     return {
       phase: this.phase,
-      levelId: this.level.id,
-      throwsUsed: this.throwsUsed,
-      throwsTotal: this.level.throws,
-      score: s.score,
-      knocked: s.knocked,
-      totalAsyks: this.level.asyks.length,
-      hasTarget,
-      targetOut: s.targetThrow !== null,
       power: this.aim?.power ?? 0,
       aiming: this.phase === 'AIMING',
-      streak: s.streak,
-      practice: this.practice,
-      tutorialStep: this.tutorialStep,
       paused: this.paused,
-      lastThrow: this.lastThrow,
+      tutorialStep: this.tutorialStep,
       message: this.message,
+      mode: this.rules.hud(),
     };
   }
 

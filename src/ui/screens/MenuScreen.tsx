@@ -36,6 +36,9 @@ export function MenuScreen({ save, muted, onToggleMute, onNavigate }: Props) {
             <button className="btn btn--primary btn--xl" onClick={() => onNavigate({ name: 'LEVEL_SELECT' })}>
               <Icon name="play" /> Играть
             </button>
+            <button className="btn btn--duel" onClick={() => onNavigate({ name: 'MATCH_SETUP' })}>
+              <Icon name="users" /> Игра вдвоём
+            </button>
             <div className="menu__secondary">
               <button className="btn" onClick={() => onNavigate({ name: 'HOW_TO' })}>
                 <Icon name="help" /> Как играть

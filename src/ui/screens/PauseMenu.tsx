@@ -3,11 +3,14 @@ import { Modal } from '../components/Modal';
 
 interface Props {
   muted: boolean;
+  /** Подпись кнопки рестарта: «Начать заново» / «Начать матч заново». */
+  restartLabel?: string;
   onResume: () => void;
   onRestart: () => void;
   onToggleMute: () => void;
-  onLevels: () => void;
-  onHowTo: () => void;
+  onLevels?: () => void;
+  onNewMatch?: () => void;
+  onHowTo?: () => void;
   onHome: () => void;
 }
 
@@ -23,14 +26,23 @@ export function PauseMenu(p: Props) {
           <Icon name="play" /> Продолжить
         </button>
         <button className="btn btn--block" onClick={p.onRestart}>
-          <Icon name="restart" /> Начать заново
+          <Icon name="restart" /> {p.restartLabel ?? 'Начать заново'}
         </button>
-        <button className="btn btn--block" onClick={p.onLevels}>
-          <Icon name="grid" /> Испытания
-        </button>
-        <button className="btn btn--block" onClick={p.onHowTo}>
-          <Icon name="help" /> Как играть
-        </button>
+        {p.onLevels && (
+          <button className="btn btn--block" onClick={p.onLevels}>
+            <Icon name="grid" /> Испытания
+          </button>
+        )}
+        {p.onNewMatch && (
+          <button className="btn btn--block" onClick={p.onNewMatch}>
+            <Icon name="users" /> Новый матч
+          </button>
+        )}
+        {p.onHowTo && (
+          <button className="btn btn--block" onClick={p.onHowTo}>
+            <Icon name="help" /> Как играть
+          </button>
+        )}
         <button className="btn btn--block btn--ghost" onClick={p.onHome}>
           <Icon name="home" /> Главное меню
         </button>

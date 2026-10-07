@@ -1,7 +1,8 @@
 import { ASYK_H, ASYK_W, CURB, KNOCKOUT_FADE_MS, SAKA_H, SAKA_W, THROW_ORIGIN, WORLD_H, WORLD_W } from '../config';
 import { aimDirection, type Aim } from '../physics/aim';
 import type { Piece } from '../physics/PhysicsWorld';
-import type { LevelConfig, Phase, Vec2 } from '../types';
+import type { KonLayout, Phase, Vec2 } from '../types';
+import type { AsykPalette } from './asykShape';
 import { drawCourtyard, type VisibleRect } from './background';
 import type { Effects } from './effects';
 import { drawHandBack, drawHandFingers, drawHandShadow } from './hand';
@@ -22,7 +23,11 @@ export interface HandAnim {
 
 /** То, что рендерер читает у движка каждый кадр. */
 export interface SceneView {
-  readonly level: LevelConfig;
+  readonly layout: KonLayout;
+  /** Цвет сақа текущего игрока. */
+  readonly sakaPalette: AsykPalette;
+  /** Цвет браслета на руке текущего игрока. */
+  readonly braceletColor: string;
   readonly pieces: readonly Piece[];
   readonly phase: Phase;
   readonly aim: Aim | null;
@@ -76,7 +81,7 @@ export class Renderer {
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
-    private zoneLevel: LevelConfig,
+    private layout: KonLayout,
   ) {
     const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) throw new Error('Canvas 2D не поддерживается');
@@ -96,8 +101,8 @@ export class Renderer {
     this.bgDirty = true;
   }
 
-  setLevel(level: LevelConfig): void {
-    this.zoneLevel = level;
+  setLayout(layout: KonLayout): void {
+    this.layout = layout;
     this.bgDirty = true;
   }
 
@@ -135,7 +140,7 @@ export class Renderer {
     const ctx = c.getContext('2d');
     if (!ctx) return;
     this.worldTransform(ctx);
-    drawCourtyard(ctx, this.zoneLevel.zone, this.visibleRect());
+    drawCourtyard(ctx, this.layout.zone, this.visibleRect());
     this.bg = c;
     this.bgDirty = false;
   }
@@ -206,7 +211,7 @@ export class Renderer {
     const lift = Math.max(0, 1 - (v.physicsTime - v.sakaLaunchedAt) / 200);
     const { x, y } = saka.body.position;
     drawAsykShadow(ctx, x, y, saka.body.angle, SAKA_W, SAKA_H, 1, lift);
-    drawAsyk(ctx, x, y, saka.body.angle, SAKA_W, SAKA_H, 'saka', 'buk', 1, 1 + lift * 0.18);
+    drawAsyk(ctx, x, y, saka.body.angle, SAKA_W, SAKA_H, v.sakaPalette, 'buk', 1, 1 + lift * 0.18);
   }
 
   private drawAim(ctx: CanvasRenderingContext2D, aim: Aim, t: number): void {
@@ -309,12 +314,12 @@ export class Renderer {
 
     ctx.save();
     ctx.scale(HS, HS);
-    drawHandBack(ctx);
+    drawHandBack(ctx, v.braceletColor);
     ctx.restore();
     if (h.sakaInHand) {
       const s = easeOutBack(h.reload);
       // сақа в руке — длинная ось вдоль направления броска (как при запуске)
-      drawAsyk(ctx, 0, 0, -Math.PI / 2, SAKA_W, SAKA_H, 'saka', 'buk', Math.min(1, h.reload * 1.5), s);
+      drawAsyk(ctx, 0, 0, -Math.PI / 2, SAKA_W, SAKA_H, v.sakaPalette, 'buk', Math.min(1, h.reload * 1.5), s);
     }
     ctx.scale(HS, HS);
     drawHandFingers(ctx, { open: h.open });

@@ -11,7 +11,9 @@ export type Route =
   | { name: 'LEVEL_SELECT' }
   | { name: 'PLAYING'; levelId: string }
   | { name: 'RECORDS' }
-  | { name: 'ABOUT' };
+  | { name: 'ABOUT' }
+  | { name: 'MATCH_SETUP' }
+  | { name: 'MATCH' };
 
 export function routeToHash(r: Route): string {
   switch (r.name) {
@@ -27,6 +29,10 @@ export function routeToHash(r: Route): string {
       return '#/records';
     case 'ABOUT':
       return '#/about';
+    case 'MATCH_SETUP':
+      return '#/duel';
+    case 'MATCH':
+      return '#/duel/play';
   }
 }
 
@@ -36,6 +42,8 @@ export function hashToRoute(hash: string): Route {
   if (h === 'levels') return { name: 'LEVEL_SELECT' };
   if (h === 'records') return { name: 'RECORDS' };
   if (h === 'about') return { name: 'ABOUT' };
+  if (h === 'duel') return { name: 'MATCH_SETUP' };
+  if (h === 'duel/play') return { name: 'MATCH' };
   const m = /^play\/([a-z0-9-]+)$/.exec(h);
   if (m) return { name: 'PLAYING', levelId: m[1] };
   return { name: 'MENU' };

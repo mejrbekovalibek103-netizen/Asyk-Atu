@@ -118,7 +118,7 @@ export function drawAsyk(
       break;
     }
   }
-  if (palette === 'saka') {
+  if (palette === 'saka' || palette === 'saka2') {
     // «құйма сақа» — сақа, утяжелённый свинцом: маленькая металлическая заливка
     ctx.fillStyle = '#9aa3ad';
     ctx.beginPath();

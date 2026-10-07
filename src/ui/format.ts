@@ -7,3 +7,11 @@ export function plural(n: number, forms: [string, string, string]): string {
   if (b === 1) return forms[0];
   return forms[2];
 }
+
+export const NAME_MAX = 16;
+
+/** Имя игрока: без лишних пробелов, не длиннее NAME_MAX, пустое → fallback. */
+export function cleanName(raw: string, fallback: string): string {
+  const s = raw.replace(/\s+/g, ' ').trim().slice(0, NAME_MAX);
+  return s || fallback;
+}

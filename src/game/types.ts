@@ -33,20 +33,25 @@ export type StarRule =
   | { type: 'score'; value: number }
   | { type: 'targetWithin'; throws: number };
 
-export interface LevelConfig {
+/** Расстановка: меловой кон и асыки в нём. Общая для испытаний и матчей. */
+export interface KonLayout {
   id: string;
-  /** Номер испытания (1…N). */
-  order: number;
   name: string;
   /** Название на казахском. */
   kazName: string;
   /** Короткое описание на карточке. */
   description: string;
+  zone: Zone;
+  asyks: AsykSpawn[];
+}
+
+/** Испытание одиночной игры: расстановка + число бросков, цель и звёзды. */
+export interface LevelConfig extends KonLayout {
+  /** Номер испытания (1…N). */
+  order: number;
   /** Подсказка, показываемая перед раундом. */
   hint: string;
   throws: number;
-  zone: Zone;
-  asyks: AsykSpawn[];
   goal: LevelGoal;
   stars: [StarRule, StarRule];
 }
@@ -78,9 +83,9 @@ export interface HudMessage {
   tone: 'info' | 'good' | 'warn';
 }
 
-export interface HudSnapshot {
-  phase: Phase;
-  levelId: string;
+/** Данные HUD одиночного испытания. */
+export interface SoloHud {
+  kind: 'solo';
   throwsUsed: number;
   throwsTotal: number;
   score: number;
@@ -88,14 +93,43 @@ export interface HudSnapshot {
   totalAsyks: number;
   hasTarget: boolean;
   targetOut: boolean;
-  power: number;
-  aiming: boolean;
   streak: number;
   practice: boolean;
-  tutorialStep: TutorialStep | null;
-  paused: boolean;
   lastThrow: ThrowSummary | null;
+}
+
+export type Seat = 0 | 1;
+
+export interface MatchPlayerHud {
+  name: string;
+  knocked: number;
+  throws: number;
+}
+
+/** Данные HUD матча вдвоём. */
+export interface MatchHud {
+  kind: 'match';
+  players: [MatchPlayerHud, MatchPlayerHud];
+  /** Чей сейчас ход. */
+  current: Seat;
+  /** Растёт при каждой смене хода — для баннера «Ход: …». */
+  turnId: number;
+  totalThrows: number;
+  maxThrows: number;
+  asyksLeft: number;
+  totalAsyks: number;
+}
+
+export type ModeHud = SoloHud | MatchHud;
+
+export interface HudSnapshot {
+  phase: Phase;
+  power: number;
+  aiming: boolean;
+  paused: boolean;
+  tutorialStep: TutorialStep | null;
   message: HudMessage | null;
+  mode: ModeHud;
 }
 
 export interface RoundResult {
@@ -114,4 +148,30 @@ export interface RoundResult {
   hitThrows: number;
   passed: boolean;
   stars: number;
+}
+
+export interface MatchConfig {
+  layoutId: string;
+  players: [string, string];
+  /** Кто бросает первым (результат жеребьёвки или очерёдность реванша). */
+  first: Seat;
+  /** Реванш: без жеребьёвки, первым бросает другой игрок. */
+  rematch?: boolean;
+}
+
+export interface MatchResult {
+  layoutId: string;
+  players: [MatchPlayerResult, MatchPlayerResult];
+  /** null — ничья. */
+  winner: Seat | null;
+  totalThrows: number;
+  /** 'cleared' — кон опустел, 'limit' — закончились броски. */
+  reason: 'cleared' | 'limit';
+}
+
+export interface MatchPlayerResult {
+  name: string;
+  knocked: number;
+  throws: number;
+  bestCombo: number;
 }

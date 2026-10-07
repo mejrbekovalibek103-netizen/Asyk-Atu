@@ -86,6 +86,24 @@ export function HowToScreen({ onNavigate, onBack }: { onNavigate: (r: Route) => 
           </ul>
         </section>
 
+        <section className="doc__section">
+          <h2>Игра вдвоём</h2>
+          <ul className="bullets">
+            <li>
+              <b>Кто первый</b> — решает жеребьёвка асыком.
+            </li>
+            <li>
+              <b>Выбил хотя бы один асык — бросаешь ещё.</b> Промахнулся — ход переходит сопернику. Так играют во дворе.
+            </li>
+            <li>
+              <b>Кон общий:</b> асыки остаются там, где их оставил предыдущий бросок.
+            </li>
+            <li>
+              <b>Победа</b> — у того, кто выбил больше асыков, когда кон опустеет (или закончится лимит в 30 бросков на двоих).
+            </li>
+          </ul>
+        </section>
+
         <section className="doc__section doc__note">
           <Ornament className="doc__ornament" />
           <h2>Это цифровая адаптация</h2>

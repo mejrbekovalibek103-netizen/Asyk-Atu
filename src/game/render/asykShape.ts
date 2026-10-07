@@ -19,10 +19,12 @@ export function asykPathD(w: number, h: number): string {
   ].join(' ');
 }
 
-export type AsykPalette = 'bone' | 'saka' | 'target';
+export type AsykPalette = 'bone' | 'saka' | 'saka2' | 'target';
 
 export const PALETTES: Record<AsykPalette, { light: string; mid: string; dark: string; stroke: string }> = {
   bone: { light: '#fbf1dc', mid: '#ecd6ae', dark: '#c9a472', stroke: 'rgba(110, 76, 38, 0.55)' },
   saka: { light: '#f47a58', mid: '#d4442b', dark: '#8f2417', stroke: 'rgba(80, 18, 10, 0.6)' },
+  /** сақа второго игрока в матче — крашеный в фиолетовый */
+  saka2: { light: '#b693ff', mid: '#7b4fd6', dark: '#45228f', stroke: 'rgba(35, 12, 70, 0.6)' },
   target: { light: '#7fd9ee', mid: '#27a6c8', dark: '#136a86', stroke: 'rgba(10, 50, 70, 0.6)' },
 };

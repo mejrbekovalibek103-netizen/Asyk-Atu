@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { sound } from './game/audio/sound';
 import { LEVELS } from './game/levels/levels';
-import type { RoundResult } from './game/types';
+import type { MatchConfig, RoundResult, Seat } from './game/types';
 import { applyRoundResult, emptySave, isLevelUnlocked, loadSave, writeSave, type RecordOutcome, type SaveData } from './storage/progress';
 import { hashToRoute, routeToHash, type Route } from './ui/routes';
 import { AboutScreen } from './ui/screens/AboutScreen';
 import { GameScreen } from './ui/screens/GameScreen';
 import { HowToScreen } from './ui/screens/HowToScreen';
 import { LevelSelectScreen } from './ui/screens/LevelSelectScreen';
+import { MatchScreen } from './ui/screens/MatchScreen';
+import { MatchSetupScreen } from './ui/screens/MatchSetupScreen';
 import { MenuScreen } from './ui/screens/MenuScreen';
 import { RecordsScreen } from './ui/screens/RecordsScreen';
 
@@ -20,6 +22,8 @@ const TITLES: Record<Route['name'], string> = {
   PLAYING: 'Игра · Асық ату',
   RECORDS: 'Рекорды · Асық ату',
   ABOUT: 'Об игре · Асық ату',
+  MATCH_SETUP: 'Игра вдвоём · Асық ату',
+  MATCH: 'Матч · Асық ату',
 };
 
 export function App() {
@@ -28,6 +32,8 @@ export function App() {
   const saveRef = useRef(save);
   saveRef.current = save;
   const depth = useRef(0);
+  /** Текущий матч вдвоём (живёт только в памяти; после перезагрузки — снова настройка). */
+  const [match, setMatch] = useState<{ id: number; config: MatchConfig } | null>(null);
 
   const reducedMotion = useMemo(() => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false, []);
 
@@ -94,12 +100,32 @@ export function App() {
 
   const isUnlocked = useCallback((id: string) => isLevelUnlocked(saveRef.current, LEVEL_IDS, id), []);
 
+  const startMatch = useCallback(
+    (config: MatchConfig) => {
+      updateSave((s) => ({ ...s, settings: { ...s.settings, duelNames: config.players, duelLayout: config.layoutId } }));
+      setMatch((m) => ({ id: (m?.id ?? 0) + 1, config }));
+      navigate({ name: 'MATCH' });
+    },
+    [updateSave, navigate],
+  );
+
+  // реванш: тот же состав и кон, первым бросает другой игрок
+  const rematch = useCallback(() => {
+    setMatch((m) => (m ? { id: m.id + 1, config: { ...m.config, first: (m.config.first === 0 ? 1 : 0) as Seat, rematch: true } } : m));
+  }, []);
+
   // закрытое или несуществующее испытание в адресе → экран выбора
   const playLevel = route.name === 'PLAYING' ? LEVELS.find((l) => l.id === route.levelId) : undefined;
   const invalidPlay = route.name === 'PLAYING' && (!playLevel || !isLevelUnlocked(save, LEVEL_IDS, route.levelId));
   useEffect(() => {
     if (invalidPlay) window.location.replace(routeToHash({ name: 'LEVEL_SELECT' }));
   }, [invalidPlay]);
+
+  // матч без настроек (например, после перезагрузки страницы) → экран настройки
+  const invalidMatch = route.name === 'MATCH' && !match;
+  useEffect(() => {
+    if (invalidMatch) window.location.replace(routeToHash({ name: 'MATCH_SETUP' }));
+  }, [invalidMatch]);
 
   // первый звук разблокируем по первому жесту на любом экране
   useEffect(() => {
@@ -119,6 +145,28 @@ export function App() {
       return <RecordsScreen save={save} onReset={resetProgress} onNavigate={navigate} onBack={back} />;
     case 'ABOUT':
       return <AboutScreen onNavigate={navigate} onBack={back} />;
+    case 'MATCH_SETUP':
+      return (
+        <MatchSetupScreen
+          initialNames={save.settings.duelNames}
+          initialLayoutId={save.settings.duelLayout}
+          onStart={startMatch}
+          onBack={() => navigate({ name: 'MENU' })}
+        />
+      );
+    case 'MATCH':
+      if (!match) return null;
+      return (
+        <MatchScreen
+          key={match.id}
+          config={match.config}
+          muted={save.settings.muted}
+          reducedMotion={reducedMotion}
+          onToggleMute={toggleMute}
+          onRematch={rematch}
+          onNavigate={navigate}
+        />
+      );
     case 'PLAYING':
       if (!playLevel || invalidPlay) return null;
       return (

@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { sound } from '../../game/audio/sound';
 import { GameEngine } from '../../game/engine/GameEngine';
 import { goalText, nextLevelId } from '../../game/levels/levels';
-import { computeCamera, type Camera } from '../../game/render/Renderer';
-import type { HudSnapshot, LevelConfig, RoundResult } from '../../game/types';
+import { SoloRules } from '../../game/rules/SoloRules';
+import type { LevelConfig, RoundResult } from '../../game/types';
 import type { RecordOutcome } from '../../storage/progress';
 import { AsykIcon } from '../components/AsykIcon';
 import { Icon } from '../components/Icon';
+import { PowerMeter, RotateHint, Toast } from '../game/GameOverlays';
+import { useGameEngine, usePauseOnHide } from '../game/useGameEngine';
 import type { Route } from '../routes';
 import { PauseMenu } from './PauseMenu';
 import { ResultOverlay } from './ResultOverlay';
@@ -24,83 +26,41 @@ interface Props {
   onNavigate: (r: Route) => void;
 }
 
-const noopSubscribe = () => () => undefined;
-
+/** Экран одиночного испытания. */
 export function GameScreen(props: Props) {
   const { level, muted } = props;
-  const containerRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const hudRef = useRef<HTMLElement>(null);
-  const [engine, setEngine] = useState<GameEngine | null>(null);
-  const [camera, setCamera] = useState<Camera>({ scale: 0.5, offsetX: 0, offsetY: 0 });
-  const [size, setSize] = useState({ w: 0, h: 0, top: 0 });
   const [pauseOpen, setPauseOpen] = useState(false);
   const [result, setResult] = useState<{ result: RoundResult; outcome: RecordOutcome } | null>(null);
 
-  // актуальные колбэки без пересоздания движка
-  const cbRef = useRef(props);
-  cbRef.current = props;
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const container = containerRef.current;
-    if (!canvas || !container) return;
-    const eng = new GameEngine(
-      canvas,
-      { level, tutorial: cbRef.current.tutorial, reducedMotion: cbRef.current.reducedMotion },
-      {
-        onRoundComplete: (r) => {
-          const outcome = cbRef.current.onRoundComplete(r);
-          setResult({ result: r, outcome });
-          if (outcome.isNewRecord) window.setTimeout(() => sound.record(), 700);
+  const view = useGameEngine(
+    (canvas) =>
+      new GameEngine(
+        canvas,
+        {
+          layout: level,
+          rules: new SoloRules(level, props.tutorial, (r) => {
+            const outcome = props.onRoundComplete(r);
+            setResult({ result: r, outcome });
+            if (outcome.isNewRecord) window.setTimeout(() => sound.record(), 700);
+          }),
+          tutorial: props.tutorial,
+          reducedMotion: props.reducedMotion,
         },
-        onTutorialDone: () => cbRef.current.onTutorialDone(),
-        onPauseRequest: () => setPauseOpen((p) => !p),
-      },
-    );
-
-    const measure = () => {
-      const r = container.getBoundingClientRect();
-      const top = (hudRef.current?.getBoundingClientRect().height ?? 0) + 8;
-      eng.resize(r.width, r.height, top);
-      setCamera(computeCamera(r.width, r.height, top));
-      setSize({ w: r.width, h: r.height, top });
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(container);
-    if (hudRef.current) ro.observe(hudRef.current);
-    eng.start();
-    setEngine(eng);
-    return () => {
-      ro.disconnect();
-      eng.destroy();
-      setEngine(null);
-    };
-  }, [level]);
-
-  const snap = useSyncExternalStore<HudSnapshot | null>(
-    engine ? engine.subscribe : noopSubscribe,
-    engine ? engine.getSnapshot : () => null,
+        {
+          onTutorialDone: () => props.onTutorialDone(),
+          onPauseRequest: () => setPauseOpen((p) => !p),
+        },
+      ),
+    level,
   );
+  const { engine, snap: s, canvasRef } = view;
+  const m = s?.mode.kind === 'solo' ? s.mode : null;
 
   // пауза физики, пока открыто меню паузы или итог раунда
   useEffect(() => {
     engine?.setPaused(pauseOpen || !!result);
   }, [engine, pauseOpen, result]);
-
-  // потеря фокуса вкладки — ставим паузу
-  useEffect(() => {
-    const onHide = () => {
-      if (document.hidden && !result) setPauseOpen(true);
-    };
-    document.addEventListener('visibilitychange', onHide);
-    return () => document.removeEventListener('visibilitychange', onHide);
-  }, [result]);
-
-  useLayoutEffect(() => {
-    canvasRef.current?.focus({ preventScroll: true });
-  }, []);
+  usePauseOnHide(() => setPauseOpen(true), !result);
 
   const restart = useCallback(() => {
     sound.uiClick();
@@ -108,27 +68,23 @@ export function GameScreen(props: Props) {
     setPauseOpen(false);
     engine?.restart();
     canvasRef.current?.focus({ preventScroll: true });
-  }, [engine]);
+  }, [engine, canvasRef]);
 
   const go = (r: Route) => {
     sound.uiClick();
     props.onNavigate(r);
   };
 
-  const s = snap;
-  const pct = Math.round((s?.power ?? 0) * 100);
-  const w2s = (x: number, y: number) => ({ x: camera.offsetX + x * camera.scale, y: camera.offsetY + y * camera.scale });
-  const meterTop = w2s(0, 870);
-  const meterBottom = w2s(0, 1140);
-  const meterX = Math.min(size.w - 58, w2s(628, 0).x);
   // подсказка у руки, пока игрок не взял сақа; дальше — над коном, чтобы не закрывать пунктир
   const coachNearHand = s?.tutorialStep === 'grab';
-  const coachPos = coachNearHand ? w2s(400, 770) : { x: w2s(400, 0).x, y: Math.max(size.top + 70, w2s(0, 190).y) };
-  const landscapePhone = size.h > 0 && size.h < 500 && size.w > size.h;
+  const coachPos = coachNearHand ? view.w2s(400, 770) : { x: view.w2s(400, 0).x, y: Math.max(view.size.top + 70, view.w2s(0, 190).y) };
   const next = nextLevelId(level.id);
+  const throwsUsed = m?.throwsUsed ?? 0;
+  const knocked = m?.knocked ?? 0;
+  const score = m?.score ?? 0;
 
   return (
-    <div className="game" ref={containerRef}>
+    <div className="game" ref={view.containerRef}>
       <canvas
         ref={canvasRef}
         className="game__canvas"
@@ -136,7 +92,7 @@ export function GameScreen(props: Props) {
         aria-label={`Игровое поле «${level.name}». Зажми сақа в руке внизу и тяни к асыкам, отпусти для броска. Клавиатура: стрелки влево/вправо — направление, вверх/вниз — сила, пробел — бросок.`}
       />
 
-      <header className="hud" ref={hudRef}>
+      <header className="hud" ref={view.hudRef}>
         <div className="hud__bar">
           <button className="icon-btn" onClick={() => setPauseOpen(true)} aria-label="Пауза и меню">
             <Icon name="pause" />
@@ -148,41 +104,41 @@ export function GameScreen(props: Props) {
             <span className="hud__goal">{goalText(level)}</span>
           </div>
           <div className="hud__stats" aria-live="off">
-            <div className="stat" aria-label={`Броски: ${s?.throwsUsed ?? 0} из ${level.throws}`}>
+            <div className="stat" aria-label={`Броски: ${throwsUsed} из ${level.throws}`}>
               <span className="stat__label">Броски</span>
               <span className="stat__value">
                 <span className="stat__icons" aria-hidden="true">
                   {Array.from({ length: level.throws }, (_, i) => (
-                    <AsykIcon key={i} palette="saka" size={17} ghost={i < (s?.throwsUsed ?? 0)} />
+                    <AsykIcon key={i} palette="saka" size={17} ghost={i < throwsUsed} />
                   ))}
                 </span>
                 <span>
-                  {s?.throwsUsed ?? 0}/{level.throws}
+                  {throwsUsed}/{level.throws}
                 </span>
               </span>
             </div>
-            <div className="stat stat--score" aria-label={`Очки: ${s?.score ?? 0}`}>
+            <div className="stat stat--score" aria-label={`Очки: ${score}`}>
               <span className="stat__label">Очки</span>
-              <span className="stat__value" key={s?.score ?? 0}>
-                <b className="bump">{s?.score ?? 0}</b>
+              <span className="stat__value" key={score}>
+                <b className="bump">{score}</b>
               </span>
             </div>
-            <div className="stat" aria-label={`Выбито ${s?.knocked ?? 0} из ${level.asyks.length}`}>
+            <div className="stat" aria-label={`Выбито ${knocked} из ${level.asyks.length}`}>
               <span className="stat__label">Выбито</span>
               <span className="stat__value">
                 <span className="stat__icons stat__icons--tray" aria-hidden="true">
                   {level.asyks.map((_, i) => (
-                    <AsykIcon key={i} size={15} ghost={i >= (s?.knocked ?? 0)} />
+                    <AsykIcon key={i} size={15} ghost={i >= knocked} />
                   ))}
                 </span>
-                {s?.hasTarget && (
-                  <span className="stat__target" title={s.targetOut ? 'Синий асык выбит' : 'Синий асык ещё в коне'}>
-                    <AsykIcon palette="target" size={18} ghost={!s.targetOut} />
-                    <span className="sr-only">{s.targetOut ? 'Синий асык выбит' : 'Синий асык ещё в коне'}</span>
+                {m?.hasTarget && (
+                  <span className="stat__target" title={m.targetOut ? 'Синий асык выбит' : 'Синий асык ещё в коне'}>
+                    <AsykIcon palette="target" size={18} ghost={!m.targetOut} />
+                    <span className="sr-only">{m.targetOut ? 'Синий асык выбит' : 'Синий асык ещё в коне'}</span>
                   </span>
                 )}
                 <span>
-                  {s?.knocked ?? 0}/{level.asyks.length}
+                  {knocked}/{level.asyks.length}
                 </span>
               </span>
             </div>
@@ -198,39 +154,17 @@ export function GameScreen(props: Props) {
         </div>
       </header>
 
-      {s?.message && (
-        <div key={s.message.id} className={`toast toast--${s.message.tone}`} style={{ top: size.top + 6 }} role="status">
-          {s.message.text}
-        </div>
-      )}
+      <Toast message={s?.message ?? null} top={view.size.top} />
       {/* объявления для скринридеров */}
       <div className="sr-only" aria-live="polite">
-        {s?.lastThrow && !s.lastThrow.practice
-          ? `Бросок ${s.lastThrow.index}: выбито ${s.lastThrow.knocked}. Очки: ${s.score}.`
-          : ''}
+        {m?.lastThrow && !m.lastThrow.practice ? `Бросок ${m.lastThrow.index}: выбито ${m.lastThrow.knocked}. Очки: ${score}.` : ''}
       </div>
 
-      <div
-        className={`power${s?.aiming ? ' power--active' : ''}`}
-        style={{ left: meterX, top: meterTop.y, height: Math.max(90, meterBottom.y - meterTop.y) }}
-        role="meter"
-        aria-label="Сила броска"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={pct}
-      >
-        <span className="power__label">Сила</span>
-        <div className="power__track">
-          <div className="power__fill" style={{ height: `${pct}%` }} />
-          <span className="power__tick" style={{ bottom: '33%' }} />
-          <span className="power__tick" style={{ bottom: '66%' }} />
-        </div>
-        <span className="power__value">{pct}%</span>
-      </div>
+      <PowerMeter view={view} power={s?.power ?? 0} aiming={!!s?.aiming} />
 
       {s?.tutorialStep && !pauseOpen && <TutorialCoach step={s.tutorialStep} x={coachPos.x} y={coachPos.y} pointer={coachNearHand} />}
 
-      {landscapePhone && !result && <div className="rotate-hint">Поверни телефон вертикально — поле будет крупнее</div>}
+      <RotateHint view={view} hidden={!!result} />
 
       {pauseOpen && !result && (
         <PauseMenu

@@ -42,7 +42,7 @@ export function AsykIcon({ palette = 'bone', size = 28, ghost = false, rotate = 
         <>
           <path d={PATH} fill={`url(#${id})`} stroke={pal.stroke} strokeWidth="1.6" />
           <ellipse cx="-8" cy="-7" rx="10" ry="4.5" fill="#fff" opacity="0.3" />
-          {palette === 'saka' && <ellipse cx="6" cy="1" rx="3.5" ry="3.8" fill="#9aa3ad" />}
+          {(palette === 'saka' || palette === 'saka2') && <ellipse cx="6" cy="1" rx="3.5" ry="3.8" fill="#9aa3ad" />}
         </>
       )}
     </svg>

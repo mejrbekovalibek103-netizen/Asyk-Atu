@@ -30,6 +30,9 @@ export interface SaveData {
   settings: {
     muted: boolean;
     tutorialDone: boolean;
+    /** Имена из последнего матча вдвоём. */
+    duelNames: [string, string];
+    duelLayout: string;
   };
 }
 
@@ -38,10 +41,11 @@ export function emptySave(): SaveData {
     version: 1,
     levels: {},
     stats: { roundsPlayed: 0, throws: 0, hitThrows: 0, asyksKnocked: 0, bestScore: 0, bestKnocked: 0, bestCombo: 0 },
-    settings: { muted: false, tutorialDone: false },
+    settings: { muted: false, tutorialDone: false, duelNames: ['', ''], duelLayout: 'ulken-kon' },
   };
 }
 
+const str = (v: unknown) => (typeof v === 'string' ? v.slice(0, 32) : '');
 const num = (v: unknown, fallback = 0) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : fallback);
 
 /** Безопасное чтение: повреждённые или чужие данные не ломают игру. */
@@ -79,6 +83,8 @@ export function loadSave(): SaveData {
       settings: {
         muted: !!data.settings?.muted,
         tutorialDone: !!data.settings?.tutorialDone,
+        duelNames: [str(data.settings?.duelNames?.[0]), str(data.settings?.duelNames?.[1])],
+        duelLayout: str(data.settings?.duelLayout) || base.settings.duelLayout,
       },
     };
   } catch {
