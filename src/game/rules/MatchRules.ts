@@ -6,7 +6,7 @@ import type { MatchConfig, MatchHud, MatchResult, Seat } from '../types';
 import { plural } from '../../ui/format';
 import type { NextStep, Rules, RulesHost } from './Rules';
 
-/** Страховка от бесконечного матча: максимум бросков на двоих. */
+/** Страховка от бесконечного матча: максимум бросков на двоих (чётное — поровну каждому). */
 export const MATCH_MAX_THROWS = 30;
 
 /** Оформление игроков: у каждого свой крашеный сақа и браслет. */
@@ -24,11 +24,21 @@ interface PlayerStyle {
 
 const other = (s: Seat): Seat => (s === 0 ? 1 : 0);
 
+/** Счёт матча для синхронизации устройств. */
+export interface MatchState {
+  current: Seat;
+  turnId: number;
+  knocked: [number, number];
+  throws: [number, number];
+  bestCombo: [number, number];
+  total: number;
+  finished: boolean;
+}
+
 /**
- * Матч вдвоём по дворовым правилам:
- * - кон общий, игроки бросают по очереди;
- * - выбил хотя бы один асык — бросаешь ещё раз, промахнулся — ход переходит;
- * - матч идёт, пока кон не опустеет (или пока не кончится лимит бросков);
+ * Матч вдвоём:
+ * - кон общий, игроки бросают строго по очереди — один бросок, и ход переходит;
+ * - матч идёт, пока кон не опустеет (или пока не кончится лимит бросков — поровну на каждого);
  * - побеждает тот, кто выбил больше асыков.
  *
  * `localSeat` — для онлайн-режима: какой игрок управляет этим экраном (null — оба, одно устройство).
@@ -112,9 +122,9 @@ export class MatchRules implements Rules {
     } else if (this.total >= MATCH_MAX_THROWS) {
       this.host.say('Броски закончились', 'info');
     } else if (n > 0) {
-      this.host.say(`${this.name(me)}: +${n} ${plural(n, ['асык', 'асыка', 'асыков'])} — бросай ещё!`, 'good', 1600);
+      this.host.say(`${this.name(me)}: +${n} ${plural(n, ['асык', 'асыка', 'асыков'])}! Ход: ${this.name(other(me))}`, 'good', 1600);
     } else {
-      this.host.say(`Мимо! Ход переходит: ${this.name(other(me))}`, 'warn', 1600);
+      this.host.say(`Мимо! Ход: ${this.name(other(me))}`, 'warn', 1600);
       sound.miss();
     }
   }
@@ -128,11 +138,9 @@ export class MatchRules implements Rules {
       this.reason = 'limit';
       return { kind: 'finish' };
     }
-    if (this.thisThrow === 0) {
-      // промах — ход переходит (по-дворовому: попал — бросаешь ещё)
-      this.current = other(this.current);
-      this.turnId += 1;
-    }
+    // строго по очереди: после каждого броска ход переходит
+    this.current = other(this.current);
+    this.turnId += 1;
     return { kind: 'continue' };
   }
 
@@ -183,7 +191,33 @@ export class MatchRules implements Rules {
       maxThrows: MATCH_MAX_THROWS,
       asyksLeft: this.host.asyksLeft(),
       totalAsyks: this.host.layout.asyks.length,
+      localSeat: this.localSeat,
+      finished: this.finished,
     };
+  }
+
+  exportState(): MatchState {
+    return {
+      current: this.current,
+      turnId: this.turnId,
+      knocked: [...this.knocked],
+      throws: [...this.throws],
+      bestCombo: [...this.bestCombo],
+      total: this.total,
+      finished: this.finished,
+    };
+  }
+
+  importState(raw: unknown): void {
+    const st = raw as MatchState;
+    if (!st || (st.current !== 0 && st.current !== 1)) return;
+    this.current = st.current;
+    this.turnId = Math.max(this.turnId, st.turnId) + 1;
+    this.knocked = [...st.knocked];
+    this.throws = [...st.throws];
+    this.bestCombo = [...st.bestCombo];
+    this.total = st.total;
+    this.started = true;
   }
 
   sakaPalette(): AsykPalette {

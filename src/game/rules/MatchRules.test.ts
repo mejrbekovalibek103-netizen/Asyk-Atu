@@ -47,21 +47,19 @@ function setup(first: 0 | 1 = 0, localSeat: 0 | 1 | null = null) {
 }
 
 describe('MatchRules: очередь ходов', () => {
-  it('попал — бросает тот же игрок, промах — ход переходит', () => {
+  it('строго по очереди: ход переходит и после попадания, и после промаха', () => {
     const { rules, play } = setup(0);
     expect(rules.hud().current).toBe(0);
-    play(1);
-    expect(rules.hud().current).toBe(0);
-    play(2, 3);
-    expect(rules.hud().current).toBe(0);
     const turn = rules.hud().turnId;
-    play();
+    play(1); // попал
     expect(rules.hud().current).toBe(1);
     expect(rules.hud().turnId).toBe(turn + 1);
-    play();
+    play(); // промах
     expect(rules.hud().current).toBe(0);
+    play(2, 3); // комбо — всё равно ход переходит
+    expect(rules.hud().current).toBe(1);
     const h = rules.hud();
-    expect(h.players[0]).toMatchObject({ knocked: 3, throws: 3 });
+    expect(h.players[0]).toMatchObject({ knocked: 3, throws: 2 });
     expect(h.players[1]).toMatchObject({ knocked: 0, throws: 1 });
   });
 
@@ -110,14 +108,15 @@ describe('MatchRules: конец матча', () => {
   it('кон пуст — победил тот, кто выбил больше', () => {
     const { play, left, result } = setup(0);
     const n = left.n;
-    play(1, 2, 3); // игрок 0: 3
-    play(); // промах → игрок 1
+    play(); // игрок 0 промахнулся
+    play(1, 2, 3); // игрок 1: комбо ×3
     let id = 10;
     let step = play(id++);
     while (step.kind !== 'finish') step = play(id++);
     const r = result()!;
     expect(r.reason).toBe('cleared');
     expect(r.players[0].knocked + r.players[1].knocked).toBe(n);
+    expect(r.players[1].knocked).toBeGreaterThan(r.players[0].knocked);
     expect(r.winner).toBe(1);
   });
 
@@ -125,7 +124,6 @@ describe('MatchRules: конец матча', () => {
     const { play, left, result } = setup(0);
     left.n = 2;
     play(1);
-    play();
     play(2);
     expect(result()!.winner).toBeNull();
   });
@@ -140,7 +138,9 @@ describe('MatchRules: конец матча', () => {
     }
     expect(count).toBe(MATCH_MAX_THROWS);
     expect(result()!.reason).toBe('limit');
-    expect(result()!.players[0].throws + result()!.players[1].throws).toBe(MATCH_MAX_THROWS);
+    // поровну каждому
+    expect(result()!.players[0].throws).toBe(MATCH_MAX_THROWS / 2);
+    expect(result()!.players[1].throws).toBe(MATCH_MAX_THROWS / 2);
   });
 
   it('после конца матча новые выбитые не засчитываются, рестарт обнуляет счёт', () => {

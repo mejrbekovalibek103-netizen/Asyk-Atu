@@ -11,11 +11,14 @@ interface Props {
   onRematch: () => void;
   onNewMatch: () => void;
   onHome: () => void;
+  /** Онлайн: реванш требует согласия обоих. */
+  online?: { rematch: 'idle' | 'sent' | 'received'; opponent: string; opponentLeft: boolean };
+  newMatchLabel?: string;
 }
 
-export function MatchResultOverlay({ result: r, layoutName, onRematch, onNewMatch, onHome }: Props) {
+export function MatchResultOverlay({ result: r, layoutName, onRematch, onNewMatch, onHome, online, newMatchLabel = 'Новый матч' }: Props) {
   const title = r.winner === null ? 'Ничья!' : `Победа: ${r.players[r.winner].name}!`;
-  const reason = r.reason === 'cleared' ? 'Кон пуст — все асыки выбиты.' : `Закончились броски (${MATCH_MAX_THROWS} на двоих).`;
+  const reason = r.reason === 'cleared' ? 'Кон пуст — все асыки выбиты.' : `У обоих закончились броски (по ${MATCH_MAX_THROWS / 2}).`;
   return (
     <Modal labelledBy="match-result-title" className="modal--result">
       <Ornament className="modal__ornament" />
@@ -49,12 +52,27 @@ export function MatchResultOverlay({ result: r, layoutName, onRematch, onNewMatc
           );
         })}
       </div>
+      {online?.rematch === 'received' && !online.opponentLeft && (
+        <p className="result-tip" role="status">
+          {online.opponent} предлагает реванш
+        </p>
+      )}
+      {online?.opponentLeft && (
+        <p className="result-tip" role="status">
+          {online.opponent} вышел из матча
+        </p>
+      )}
       <div className="result-actions">
-        <button className="btn btn--primary" onClick={onRematch} data-autofocus>
-          Реванш
+        <button
+          className="btn btn--primary"
+          onClick={onRematch}
+          data-autofocus
+          disabled={online && (online.rematch === 'sent' || online.opponentLeft)}
+        >
+          {!online ? 'Реванш' : online.rematch === 'received' ? 'Принять реванш' : online.rematch === 'sent' ? 'Ждём ответ соперника…' : 'Предложить реванш'}
         </button>
         <button className="btn" onClick={onNewMatch}>
-          Новый матч
+          {newMatchLabel}
         </button>
         <button className="btn btn--ghost" onClick={onHome}>
           На главную

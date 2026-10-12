@@ -1,4 +1,4 @@
-type IconName = 'pause' | 'play' | 'restart' | 'sound' | 'mute' | 'back' | 'lock' | 'trophy' | 'help' | 'home' | 'grid' | 'info' | 'close' | 'users' | 'dice';
+type IconName = 'pause' | 'play' | 'restart' | 'sound' | 'mute' | 'back' | 'lock' | 'trophy' | 'help' | 'home' | 'grid' | 'info' | 'close' | 'users' | 'dice' | 'globe';
 
 const PATHS: Record<IconName, string> = {
   pause: 'M8 5h3v14H8zM13 5h3v14h-3z',
@@ -14,6 +14,7 @@ const PATHS: Record<IconName, string> = {
   grid: 'M5 5h5.5v5.5H5zM13.5 5H19v5.5h-5.5zM5 13.5h5.5V19H5zM13.5 13.5H19V19h-5.5z',
   info: 'M12 21a9 9 0 1 1 0-18 9 9 0 0 1 0 18zM12 10.5V16.5M12 7.5v.5',
   close: 'M6 6l12 12M18 6L6 18',
+  globe: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM3.5 9h17M3.5 15h17M12 3c2.5 2.6 3.7 5.6 3.7 9s-1.2 6.4-3.7 9c-2.5-2.6-3.7-5.6-3.7-9S9.5 5.6 12 3z',
   users: 'M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2.5 20c.6-3.4 3.2-5.5 6.5-5.5s5.9 2.1 6.5 5.5M16 4.3a3.5 3.5 0 0 1 0 6.4M18 14.8c1.9.8 3.2 2.6 3.5 5.2',
   dice: 'M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM8.5 8.5v.01M15.5 8.5v.01M12 12v.01M8.5 15.5v.01M15.5 15.5v.01',
 };

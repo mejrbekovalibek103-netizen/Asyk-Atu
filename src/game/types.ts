@@ -118,6 +118,9 @@ export interface MatchHud {
   maxThrows: number;
   asyksLeft: number;
   totalAsyks: number;
+  /** Онлайн: за какого игрока этот экран (null — оба на одном устройстве). */
+  localSeat: Seat | null;
+  finished: boolean;
 }
 
 export type ModeHud = SoloHud | MatchHud;
@@ -129,6 +132,10 @@ export interface HudSnapshot {
   paused: boolean;
   tutorialStep: TutorialStep | null;
   message: HudMessage | null;
+  /** Онлайн: соперник сейчас целится (видна его рука и пунктир). */
+  remoteAiming: boolean;
+  /** Онлайн: воспроизведение броска соперника ждёт данные из сети. */
+  netWaiting: boolean;
   mode: ModeHud;
 }
 

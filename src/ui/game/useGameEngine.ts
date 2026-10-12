@@ -49,6 +49,10 @@ export function useGameEngine(create: (canvas: HTMLCanvasElement) => GameEngine,
     if (hudRef.current) ro.observe(hudRef.current);
     eng.start();
     setEngine(eng);
+    if (import.meta.env.DEV) {
+      // только в режиме разработки: доступ к движку из консоли для отладки и автотестов в браузере
+      (window as unknown as { __asykEngine?: GameEngine }).__asykEngine = eng;
+    }
     return () => {
       ro.disconnect();
       eng.destroy();

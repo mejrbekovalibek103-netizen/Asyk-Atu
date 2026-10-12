@@ -7,6 +7,7 @@ import { PhysicsWorld, type ContactEvent, type Piece } from '../physics/PhysicsW
 import type { AsykPalette } from '../render/asykShape';
 import { Effects } from '../render/effects';
 import { Renderer, type HandAnim, type SceneView } from '../render/Renderer';
+import { contactFromEvent, ThrowPlayer, ThrowRecorder, type ThrowChunk, type ThrowEnd, type ThrowStart } from '../replay/throwRecord';
 import type { Rules, RulesHost } from '../rules/Rules';
 import type { HudMessage, HudSnapshot, KonLayout, Phase, TutorialStep, Vec2 } from '../types';
 
@@ -15,7 +16,8 @@ import type { HudMessage, HudSnapshot, KonLayout, Phase, TutorialStep, Vec2 } fr
  * это защищает от двойного броска, повторного подсчёта и «гонок» таймеров.
  */
 const TRANSITIONS: Record<Phase, readonly Phase[]> = {
-  READY: ['AIMING'],
+  // READY → THROWING — только для воспроизведения броска соперника в онлайн-матче
+  READY: ['AIMING', 'THROWING'],
   AIMING: ['READY', 'THROWING'],
   THROWING: ['RESOLVING'],
   RESOLVING: ['READY', 'ROUND_COMPLETE'],
@@ -31,10 +33,27 @@ export interface EngineOptions {
   reducedMotion: boolean;
 }
 
+/** Онлайн-матч: что движок отправляет сопернику. */
+export interface NetHooks {
+  /** Прицел (не чаще ~12 раз в секунду); null — прицел отменён. */
+  onAim(aim: { angle: number; power: number } | null): void;
+  onThrowStart(start: ThrowStart): void;
+  onThrowChunk(chunk: ThrowChunk): void;
+  onThrowEnd(end: ThrowEnd): void;
+}
+
+export interface MatchSyncState {
+  asyks: ReturnType<PhysicsWorld['exportAsyks']>;
+  rules: unknown;
+}
+
 export interface EngineCallbacks {
   onTutorialDone?(): void;
   onPauseRequest?(): void;
+  net?: NetHooks;
 }
+
+const AIM_SEND_MS = 80;
 
 interface Task {
   at: number;
@@ -51,7 +70,10 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
   // ——— SceneView / RulesHost ———
   readonly layout: KonLayout;
   phase: Phase = 'READY';
-  aim: Aim | null = null;
+  /** Свой прицел (пока тянем). */
+  private localAim: Aim | null = null;
+  /** Прицел соперника в онлайн-матче. */
+  private remoteAim: Aim | null = null;
   hoverGrab = false;
   hand: HandAnim = { offset: 0, angle: 0, open: 0, sakaInHand: true, reload: 1 };
   readonly effects: Effects;
@@ -81,6 +103,12 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
   private message: HudMessage | null = null;
   private msgId = 0;
   private waitHintShown = false;
+  /** Запись своего броска для соперника (онлайн). */
+  private recorder: ThrowRecorder | null = null;
+  /** Воспроизведение броска соперника (онлайн). */
+  private player: ThrowPlayer | null = null;
+  private lastAimSentAt = 0;
+  private replayStalled = false;
 
   private raf = 0;
   private lastNow = 0;
@@ -153,7 +181,10 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
     this.rules.reset();
     this.currentThrow = 0;
     this.launched = false;
-    this.aim = null;
+    this.localAim = null;
+    this.remoteAim = null;
+    this.recorder = null;
+    this.player = null;
     this.aimSource = null;
     this.trail = [];
     this.message = null;
@@ -182,6 +213,17 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
 
   get physicsTime(): number {
     return this.physics.time;
+  }
+
+  /** Прицел на экране: свой, пока тянем, или соперника, пока он целится. */
+  get aim(): Aim | null {
+    if (this.phase === 'AIMING') return this.localAim;
+    if (this.phase === 'READY') return this.remoteAim;
+    return null;
+  }
+
+  get localTurn(): boolean {
+    return this.rules.canThrow();
   }
 
   get sakaPalette(): AsykPalette {
@@ -242,8 +284,9 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
     }
     if (!this.setPhase('AIMING')) return false;
     this.aimSource = 'pointer';
-    this.aim = aimFromPoint(THROW_ORIGIN, p, this.lastAngle);
+    this.localAim = aimFromPoint(THROW_ORIGIN, p, this.lastAngle);
     if (this.tutorialStep === 'grab') this.tutorialStep = 'drag';
+    this.sendAim(true);
     this.emit();
     return true;
   }
@@ -255,14 +298,15 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
       return;
     }
     if (this.phase !== 'AIMING' || this.aimSource !== 'pointer') return;
-    this.aim = aimFromPoint(THROW_ORIGIN, p, this.aim?.angle ?? this.lastAngle);
+    this.localAim = aimFromPoint(THROW_ORIGIN, p, this.localAim?.angle ?? this.lastAngle);
     this.advanceTutorialOnAim();
+    this.sendAim(false);
     this.emit();
   }
 
   pointerUp(p: Vec2): void {
     if (this.phase !== 'AIMING' || this.aimSource !== 'pointer') return;
-    this.aim = aimFromPoint(THROW_ORIGIN, p, this.aim?.angle ?? this.lastAngle);
+    this.localAim = aimFromPoint(THROW_ORIGIN, p, this.localAim?.angle ?? this.lastAngle);
     this.releaseThrow();
   }
 
@@ -276,12 +320,13 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
       if (!this.rules.canThrow()) return;
       if (!this.setPhase('AIMING')) return;
       this.aimSource = 'keyboard';
-      this.aim = aimFromAnglePower(this.lastAngle, this.lastPower);
+      this.localAim = aimFromAnglePower(this.lastAngle, this.lastPower);
       if (this.tutorialStep === 'grab') this.tutorialStep = 'drag';
     }
-    if (this.phase !== 'AIMING' || this.aimSource !== 'keyboard' || !this.aim) return;
-    this.aim = aimFromAnglePower(this.aim.angle + dAngle, this.aim.power + dPower);
+    if (this.phase !== 'AIMING' || this.aimSource !== 'keyboard' || !this.localAim) return;
+    this.localAim = aimFromAnglePower(this.localAim.angle + dAngle, this.localAim.power + dPower);
     this.advanceTutorialOnAim();
+    this.sendAim(false);
     this.emit();
   }
 
@@ -333,21 +378,24 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
   };
 
   private fixedStep(): void {
-    this.physics.step();
-    for (const c of this.physics.drainContacts()) this.onContact(c);
-
-    // выбитые асыки растворяются и удаляются из мира
-    for (const p of [...this.physics.pieces]) {
-      if (p.status === 'out' && p.outAt !== null && this.physics.time - p.outAt > KNOCKOUT_FADE_MS) {
-        this.physics.removePiece(p);
-      }
+    if (this.player && this.launched) {
+      this.replayStep();
+      return;
     }
+    this.physics.step();
+    const contacts = this.physics.drainContacts();
+    for (const c of contacts) this.onContact(c);
+    this.removeFaded();
 
     if (this.phase !== 'THROWING' || !this.launched) return;
 
     const out = this.physics.checkKnockouts(this.layout.zone, this.currentThrow);
     for (const p of out) this.rules.onKnockout(p, this.currentThrow);
     if (out.length) this.emit();
+    if (this.recorder) {
+      const chunk = this.recorder.onStep(contacts, out);
+      if (chunk) this.cb.net?.onThrowChunk(chunk);
+    }
 
     if (this.physics.isSettled()) {
       this.settledFor += PHYS.stepMs;
@@ -361,10 +409,148 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
     }
   }
 
+  /** Выбитые асыки растворяются и удаляются из мира. */
+  private removeFaded(): void {
+    for (const p of [...this.physics.pieces]) {
+      if (p.status === 'out' && p.outAt !== null && this.physics.time - p.outAt > KNOCKOUT_FADE_MS) {
+        this.physics.removePiece(p);
+      }
+    }
+  }
+
+  // ——— онлайн: бросок соперника ———
+
+  /** Соперник отпустил сақа: показываем выброс его руки, дальше проигрываем запись. */
+  remoteThrowStart(start: ThrowStart): void {
+    if (this.phase !== 'READY' || this.rules.canThrow()) return;
+    if (!this.setPhase('THROWING')) return;
+    this.remoteAim = null;
+    this.player = new ThrowPlayer(start);
+    this.launched = false;
+    this.hand.angle = start.angle;
+    this.release = { at: this.clock, from: -start.power * 30 };
+    sound.throw(start.power);
+    this.schedule(RELEASE_DELAY_MS, () => this.startReplay(start));
+    this.emit();
+  }
+
+  remoteThrowChunk(chunk: ThrowChunk): void {
+    this.player?.push(chunk);
+  }
+
+  remoteThrowEnd(end: ThrowEnd): void {
+    this.player?.end(end);
+  }
+
+  /** Прицел соперника — видно, как он тянет руку. */
+  setRemoteAim(a: { angle: number; power: number } | null): void {
+    const show = this.phase === 'READY' && !this.rules.canThrow();
+    const next = show && a ? aimFromAnglePower(a.angle, a.power) : null;
+    if (!next && !this.remoteAim) return;
+    this.remoteAim = next;
+    this.emit();
+  }
+
+  private startReplay(start: ThrowStart): void {
+    if (this.phase !== 'THROWING' || !this.player || this.launched) return;
+    this.currentThrow = this.rules.onLaunch();
+    this.physics.launchSaka(THROW_ORIGIN, start.angle, 0, 0);
+    this.sakaLaunchedAt = this.physics.time;
+    this.launched = true;
+    this.hand.sakaInHand = false;
+    const d = aimDirection(start.angle);
+    this.effects.dust(THROW_ORIGIN.x + d.x * 30, THROW_ORIGIN.y + d.y * 30, 2, 'rgba(230, 220, 200, 1)');
+    this.emit();
+  }
+
+  /**
+   * Шаг воспроизведения: тела ставятся по записи, физика не считается.
+   * Если запись из сети ещё не пришла — бросок «замирает» и ждёт.
+   */
+  private replayStep(): void {
+    const player = this.player!;
+    if (player.done()) {
+      this.finishReplay();
+      return;
+    }
+    const stalled = !player.canAdvance();
+    if (stalled !== this.replayStalled) {
+      this.replayStalled = stalled;
+      this.emit(); // интерфейс покажет «связь…», если данные задерживаются
+    }
+    if (stalled) return;
+    this.physics.advanceTime(PHYS.stepMs);
+    for (const e of player.advance(this.physics)) {
+      if (e.t === 'c') this.onContact(contactFromEvent(e));
+      else this.knockRemote(e.i);
+    }
+    this.removeFaded();
+    if (player.done()) this.finishReplay();
+  }
+
+  private knockRemote(index: number): void {
+    const p = this.physics.pieceByIndex(index);
+    if (p && this.physics.markOut(p, this.currentThrow)) {
+      this.rules.onKnockout(p, this.currentThrow);
+      this.emit();
+    }
+  }
+
+  private finishReplay(): void {
+    const end = this.player?.ended;
+    if (!end) return;
+    this.player = null;
+    // итоговое состояние соперника — истина: досчитываем выбитые, которых не было в событиях
+    for (const [i, , , , inZone] of end.final) if (!inZone) this.knockRemote(i);
+    this.physics.importAsyks(end.final, this.layout.asyks);
+    const saka = this.physics.saka;
+    if (end.saka && saka) this.physics.place(saka, end.saka[0], end.saka[1], end.saka[2]);
+    this.resolveThrow();
+  }
+
+  /** Счёт и кон для переподключившегося соперника. */
+  exportMatchState(): MatchSyncState {
+    return { asyks: this.physics.exportAsyks(this.layout.asyks.length), rules: this.rules.exportState?.() };
+  }
+
+  /**
+   * Применить состояние матча от соперника.
+   * Обычно — только между бросками; `force` — прервать застрявшее воспроизведение
+   * (например, соперник переподключился, и часть записи броска потерялась).
+   */
+  importMatchState(st: MatchSyncState, force = false): boolean {
+    if (this.phase === 'ROUND_COMPLETE') return false;
+    if (this.phase !== 'READY') {
+      if (!force || this.recorder) return false; // свой бросок не прерываем
+      this.player = null;
+      this.launched = false;
+      this.localAim = null;
+      this.aimSource = null;
+      this.release = null;
+      this.physics.removeSaka();
+      this.phase = 'READY';
+      this.hand = { offset: 0, angle: 0, open: 0, sakaInHand: true, reload: 0 };
+    }
+    this.physics.importAsyks(st.asyks, this.layout.asyks);
+    this.rules.importState?.(st.rules);
+    this.remoteAim = null;
+    this.emit();
+    return true;
+  }
+
+  private sendAim(force: boolean): void {
+    const net = this.cb.net;
+    if (!net || !this.localAim) return;
+    const now = performance.now();
+    if (!force && now - this.lastAimSentAt < AIM_SEND_MS) return;
+    this.lastAimSentAt = now;
+    net.onAim({ angle: Math.round(this.localAim.angle * 1000) / 1000, power: Math.round(this.localAim.power * 1000) / 1000 });
+  }
+
   // ——— бросок ———
 
   private releaseThrow(): void {
-    const aim = this.aim;
+    const aim = this.localAim;
     if (this.phase !== 'AIMING' || !aim) return;
     if (!aim.valid) {
       this.cancelAim(true);
@@ -393,7 +579,11 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
     this.sakaLaunchedAt = this.physics.time;
     this.launched = true;
     this.hand.sakaInHand = false;
-    this.aim = null;
+    this.localAim = null;
+    if (this.cb.net) {
+      this.recorder = new ThrowRecorder(this.physics);
+      this.cb.net.onThrowStart({ throwIndex: this.currentThrow, angle: params.angle, power: this.lastPower });
+    }
     const d = aimDirection(params.angle);
     this.effects.dust(THROW_ORIGIN.x + d.x * 30, THROW_ORIGIN.y + d.y * 30, 2, 'rgba(230, 220, 200, 1)');
     this.emit();
@@ -401,10 +591,11 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
 
   private cancelAim(tooWeak: boolean): void {
     if (this.phase !== 'AIMING') return;
-    const hadPower = (this.aim?.power ?? 0) > 0.01;
-    this.aim = null;
+    const hadPower = (this.localAim?.power ?? 0) > 0.01;
+    this.localAim = null;
     this.aimSource = null;
     this.setPhase('READY');
+    this.cb.net?.onAim(null);
     if (tooWeak) {
       this.say(hadPower ? 'Слишком слабо — потяни дальше от руки' : 'Потяни от руки вверх, к асыкам', 'warn', 2000);
       if (this.tutorialStep === 'release') this.tutorialStep = 'drag';
@@ -416,6 +607,12 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
     if (this.phase !== 'THROWING') return;
     if (!this.setPhase('RESOLVING')) return;
     this.trail = [];
+    if (this.recorder) {
+      const { chunk, end } = this.recorder.finish(this.layout.asyks.length);
+      this.recorder = null;
+      this.cb.net?.onThrowChunk(chunk);
+      this.cb.net?.onThrowEnd(end);
+    }
     this.rules.onSettled(this.currentThrow);
     this.emit();
     this.schedule(RESOLVE_PAUSE_MS, () => this.afterResolve());
@@ -441,6 +638,7 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
         this.rules.onFinish();
         break;
       case 'continue':
+        this.remoteAim = null;
         this.setPhase('READY');
         this.hand.sakaInHand = true;
         this.hand.reload = 0;
@@ -486,10 +684,12 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
       } else {
         this.release = null;
       }
-    } else if (this.phase === 'AIMING' && this.aim) {
+    } else if (this.aim) {
       // замах: рука поворачивается к цели и оттягивается назад пропорционально силе
-      h.angle += (this.aim.angle - h.angle) * Math.min(1, k * 3);
-      h.offset += (-this.aim.power * 30 - h.offset) * Math.min(1, k * 3);
+      // (в онлайне так же двигается рука соперника, пока он целится)
+      const aim = this.aim;
+      h.angle += (aim.angle - h.angle) * Math.min(1, k * 3);
+      h.offset += (-aim.power * 30 - h.offset) * Math.min(1, k * 3);
       h.open += (0 - h.open) * k;
     } else {
       h.offset += (0 - h.offset) * k;
@@ -529,7 +729,7 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
   }
 
   private advanceTutorialOnAim(): void {
-    if (this.tutorialStep === 'drag' && this.aim && this.aim.valid && this.aim.power >= 0.3) {
+    if (this.tutorialStep === 'drag' && this.localAim && this.localAim.valid && this.localAim.power >= 0.3) {
       this.tutorialStep = 'release';
     }
   }
@@ -552,11 +752,13 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
   private buildSnapshot(): HudSnapshot {
     return {
       phase: this.phase,
-      power: this.aim?.power ?? 0,
+      power: this.localAim?.power ?? 0,
       aiming: this.phase === 'AIMING',
       paused: this.paused,
       tutorialStep: this.tutorialStep,
       message: this.message,
+      remoteAiming: this.phase === 'READY' && !!this.remoteAim,
+      netWaiting: !!this.player && this.launched && this.replayStalled,
       mode: this.rules.hud(),
     };
   }

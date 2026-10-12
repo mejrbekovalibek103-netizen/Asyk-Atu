@@ -10,6 +10,9 @@ import { HowToScreen } from './ui/screens/HowToScreen';
 import { LevelSelectScreen } from './ui/screens/LevelSelectScreen';
 import { MatchScreen } from './ui/screens/MatchScreen';
 import { MatchSetupScreen } from './ui/screens/MatchSetupScreen';
+import { RoomScreen } from './ui/screens/RoomScreen';
+import { makeClientId, makeRoomCode } from './net/protocol';
+import { saveRoomSession } from './net/session';
 import { MenuScreen } from './ui/screens/MenuScreen';
 import { RecordsScreen } from './ui/screens/RecordsScreen';
 
@@ -24,6 +27,7 @@ const TITLES: Record<Route['name'], string> = {
   ABOUT: 'Об игре · Асық ату',
   MATCH_SETUP: 'Игра вдвоём · Асық ату',
   MATCH: 'Матч · Асық ату',
+  ROOM: 'Онлайн-матч · Асық ату',
 };
 
 export function App() {
@@ -109,6 +113,22 @@ export function App() {
     [updateSave, navigate],
   );
 
+  // онлайн: хост создаёт комнату и получает ссылку для друга
+  const createRoom = useCallback(
+    (name: string, layoutId: string) => {
+      const code = makeRoomCode();
+      saveRoomSession(code, { clientId: makeClientId(), seat: 0, name, layoutId, match: null });
+      updateSave((s) => ({ ...s, settings: { ...s.settings, onlineName: name, duelLayout: layoutId } }));
+      navigate({ name: 'ROOM', code });
+    },
+    [updateSave, navigate],
+  );
+
+  const rememberOnlineName = useCallback(
+    (name: string) => updateSave((s) => ({ ...s, settings: { ...s.settings, onlineName: name } })),
+    [updateSave],
+  );
+
   // реванш: тот же состав и кон, первым бросает другой игрок
   const rematch = useCallback(() => {
     setMatch((m) => (m ? { id: m.id + 1, config: { ...m.config, first: (m.config.first === 0 ? 1 : 0) as Seat, rematch: true } } : m));
@@ -149,9 +169,24 @@ export function App() {
       return (
         <MatchSetupScreen
           initialNames={save.settings.duelNames}
+          initialOnlineName={save.settings.onlineName}
           initialLayoutId={save.settings.duelLayout}
           onStart={startMatch}
+          onCreateRoom={createRoom}
           onBack={() => navigate({ name: 'MENU' })}
+        />
+      );
+    case 'ROOM':
+      return (
+        <RoomScreen
+          key={route.code}
+          code={route.code}
+          defaultName={save.settings.onlineName}
+          muted={save.settings.muted}
+          reducedMotion={reducedMotion}
+          onToggleMute={toggleMute}
+          onRememberName={rememberOnlineName}
+          onExit={() => navigate({ name: 'MENU' })}
         />
       );
     case 'MATCH':

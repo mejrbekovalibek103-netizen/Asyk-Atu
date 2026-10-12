@@ -40,6 +40,8 @@ export interface SceneView {
   readonly sakaLaunchedAt: number;
   readonly trail: readonly Vec2[];
   readonly showGrabHint: boolean;
+  /** Сейчас может бросать этот экран (в онлайне — только в свой ход). */
+  readonly localTurn: boolean;
 }
 
 export interface Camera {
@@ -159,7 +161,8 @@ export class Renderer {
 
     this.drawPieces(ctx, v);
     this.drawSakaInFlight(ctx, v);
-    if (v.aim && v.phase === 'AIMING') this.drawAim(ctx, v.aim, v.clock);
+    // свой прицел или прицел соперника в онлайн-матче
+    if (v.aim) this.drawAim(ctx, v.aim, v.clock);
     this.drawHand(ctx, v);
     this.drawEffects(ctx, v);
   }
@@ -286,7 +289,7 @@ export class Renderer {
     const hy = THROW_ORIGIN.y + dir.y * h.offset;
 
     // приглашение «возьми сақа»
-    if (v.phase === 'READY' && h.sakaInHand) {
+    if (v.phase === 'READY' && h.sakaInHand && v.localTurn && !v.aim) {
       const t = (v.clock % 1600) / 1600;
       const strong = v.hoverGrab || v.showGrabHint;
       ctx.save();

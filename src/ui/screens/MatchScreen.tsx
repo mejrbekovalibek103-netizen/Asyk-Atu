@@ -2,11 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { sound } from '../../game/audio/sound';
 import { GameEngine } from '../../game/engine/GameEngine';
 import { getMatchLayout } from '../../game/levels/matchLayouts';
-import { MatchRules, PLAYER_STYLE } from '../../game/rules/MatchRules';
+import { MatchRules } from '../../game/rules/MatchRules';
 import type { MatchConfig, MatchHud, MatchResult, Seat } from '../../game/types';
-import { AsykIcon } from '../components/AsykIcon';
 import { Icon } from '../components/Icon';
 import { PowerMeter, RotateHint, Toast } from '../game/GameOverlays';
+import { PlayerCard, TurnBanner } from '../game/MatchParts';
 import { useGameEngine, usePauseOnHide } from '../game/useGameEngine';
 import type { Route } from '../routes';
 import { MatchResultOverlay } from './MatchResultOverlay';
@@ -137,36 +137,6 @@ export function MatchScreen(props: Props) {
           onHome={() => go({ name: 'MENU' })}
         />
       )}
-    </div>
-  );
-}
-
-function PlayerCard({ seat, hud }: { seat: Seat; hud: MatchHud | null }) {
-  const p = hud?.players[seat];
-  const active = hud?.current === seat;
-  return (
-    <div
-      className={`player-card${active ? ' player-card--active' : ''}`}
-      style={{ '--player': PLAYER_STYLE[seat].color } as React.CSSProperties}
-      aria-label={`${p?.name ?? ''}: выбито ${p?.knocked ?? 0}${active ? ', сейчас бросает' : ''}`}
-    >
-      <AsykIcon palette={PLAYER_STYLE[seat].palette} size={20} />
-      <span className="player-card__name">{p?.name}</span>
-      <b className="player-card__score bump" key={p?.knocked}>
-        {p?.knocked ?? 0}
-      </b>
-      {active && <span className="player-card__turn">бросает</span>}
-    </div>
-  );
-}
-
-/** Крупная надпись «Ход: …» при каждой смене игрока — на одном устройстве это сигнал передать телефон. */
-function TurnBanner({ hud, y }: { hud: MatchHud; y: number }) {
-  const p = hud.players[hud.current];
-  return (
-    <div key={hud.turnId} className="turn-banner" style={{ top: y, '--player': PLAYER_STYLE[hud.current].color } as React.CSSProperties} aria-hidden="true">
-      <span className="turn-banner__label">Ход</span>
-      <span className="turn-banner__name">{p.name}</span>
     </div>
   );
 }

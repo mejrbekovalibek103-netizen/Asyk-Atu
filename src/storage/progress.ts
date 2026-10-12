@@ -33,6 +33,8 @@ export interface SaveData {
     /** Имена из последнего матча вдвоём. */
     duelNames: [string, string];
     duelLayout: string;
+    /** Имя для онлайн-матчей. */
+    onlineName: string;
   };
 }
 
@@ -41,7 +43,7 @@ export function emptySave(): SaveData {
     version: 1,
     levels: {},
     stats: { roundsPlayed: 0, throws: 0, hitThrows: 0, asyksKnocked: 0, bestScore: 0, bestKnocked: 0, bestCombo: 0 },
-    settings: { muted: false, tutorialDone: false, duelNames: ['', ''], duelLayout: 'ulken-kon' },
+    settings: { muted: false, tutorialDone: false, duelNames: ['', ''], duelLayout: 'ulken-kon', onlineName: '' },
   };
 }
 
@@ -85,6 +87,7 @@ export function loadSave(): SaveData {
         tutorialDone: !!data.settings?.tutorialDone,
         duelNames: [str(data.settings?.duelNames?.[0]), str(data.settings?.duelNames?.[1])],
         duelLayout: str(data.settings?.duelLayout) || base.settings.duelLayout,
+        onlineName: str(data.settings?.onlineName),
       },
     };
   } catch {

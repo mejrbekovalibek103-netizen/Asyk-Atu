@@ -19,6 +19,8 @@ const FACES: AsykFace[] = ['alshy', 'taiky', 'buk', 'shik'];
 
 export interface Piece {
   id: number;
+  /** Номер асыка в расстановке (одинаков на всех устройствах); у сақа — -1. */
+  index: number;
   kind: PieceKind;
   body: Matter.Body;
   status: 'in' | 'out';
@@ -32,6 +34,11 @@ export interface Piece {
 }
 
 export type ContactType = 'saka-asyk' | 'asyk-asyk' | 'wall';
+
+/** [номер асыка, x, y, угол, 1 — в коне / 0 — выбит]. */
+export type AsykState = [number, number, number, number, 0 | 1];
+
+const round = (v: number, k = 100) => Math.round(v * k) / k;
 
 export interface ContactEvent {
   x: number;
@@ -89,30 +96,35 @@ export class PhysicsWorld {
   }
 
   addAsyks(spawns: AsykSpawn[]): void {
-    spawns.forEach((s, i) => {
-      const kind: PieceKind = s.kind === 'target' ? 'target' : 'asyk';
-      const body = Bodies.rectangle(s.x, s.y, ASYK_W, ASYK_H, {
-        chamfer: { radius: 11 },
-        angle: s.angle ?? 0,
-        density: PHYS.density.asyk,
-        restitution: PHYS.restitution.asyk,
-        friction: PHYS.friction,
-        frictionStatic: 0.2,
-        frictionAir: 0, // трение о землю считаем сами (см. applyGroundFriction)
-        label: kind,
-        collisionFilter: { category: CAT.ASYK, mask: CAT.WALL | CAT.SAKA | CAT.ASYK },
-      });
-      this.register({
-        id: this.nextId++,
-        kind,
-        body,
-        status: 'in',
-        face: FACES[(i * 7 + 1) % FACES.length],
-        outAt: null,
-        outThrow: null,
-        wobble: 0,
-      });
+    spawns.forEach((s, i) => this.addAsyk(s, i));
+  }
+
+  private addAsyk(s: AsykSpawn, i: number): Piece {
+    const kind: PieceKind = s.kind === 'target' ? 'target' : 'asyk';
+    const body = Bodies.rectangle(s.x, s.y, ASYK_W, ASYK_H, {
+      chamfer: { radius: 11 },
+      angle: s.angle ?? 0,
+      density: PHYS.density.asyk,
+      restitution: PHYS.restitution.asyk,
+      friction: PHYS.friction,
+      frictionStatic: 0.2,
+      frictionAir: 0, // трение о землю считаем сами (см. applyGroundFriction)
+      label: kind,
+      collisionFilter: { category: CAT.ASYK, mask: CAT.WALL | CAT.SAKA | CAT.ASYK },
     });
+    const piece: Piece = {
+      id: this.nextId++,
+      index: i,
+      kind,
+      body,
+      status: 'in',
+      face: FACES[(i * 7 + 1) % FACES.length],
+      outAt: null,
+      outThrow: null,
+      wobble: 0,
+    };
+    this.register(piece);
+    return piece;
   }
 
   /**
@@ -138,6 +150,7 @@ export class PhysicsWorld {
     });
     const piece: Piece = {
       id: this.nextId++,
+      index: -1,
       kind: 'saka',
       body,
       status: 'in',
@@ -191,11 +204,7 @@ export class PhysicsWorld {
     for (const p of this.pieces) {
       if (p.kind === 'saka' || p.status !== 'in') continue;
       if (!zoneContains(zone, p.body.position)) {
-        p.status = 'out';
-        p.outAt = this.time;
-        p.outThrow = throwIndex;
-        // выбитый асык продолжает скользить и отражаться от бордюра, но больше ни с чем не сталкивается
-        p.body.collisionFilter = { category: CAT.OUT, mask: CAT.WALL, group: 0 };
+        this.markOut(p, throwIndex);
         out.push(p);
       }
     }
@@ -221,6 +230,67 @@ export class PhysicsWorld {
 
   asyksIn(): Piece[] {
     return this.pieces.filter((p) => p.kind !== 'saka' && p.status === 'in');
+  }
+
+  /** Пометить асык выбитым (статус меняется один раз). Используется и физикой, и воспроизведением чужого броска. */
+  markOut(p: Piece, throwIndex: number): boolean {
+    if (p.status !== 'in' || p.kind === 'saka') return false;
+    p.status = 'out';
+    p.outAt = this.time;
+    p.outThrow = throwIndex;
+    // выбитый асык продолжает скользить и отражаться от бордюра, но больше ни с чем не сталкивается
+    p.body.collisionFilter = { category: CAT.OUT, mask: CAT.WALL, group: 0 };
+    return true;
+  }
+
+  pieceByIndex(index: number): Piece | undefined {
+    return index === -1 ? (this.saka ?? undefined) : this.pieces.find((p) => p.index === index);
+  }
+
+  /** Поставить тело в точку без скорости (воспроизведение записи, синхронизация). */
+  place(p: Piece, x: number, y: number, angle: number): void {
+    Body.setPosition(p.body, { x, y });
+    Body.setAngle(p.body, angle);
+    Body.setVelocity(p.body, { x: 0, y: 0 });
+    Body.setAngularVelocity(p.body, 0);
+  }
+
+  /** Время идёт без интегрирования физики (во время воспроизведения чужого броска). */
+  advanceTime(ms: number): void {
+    this.time += ms;
+    for (const p of this.pieces) {
+      if (p.wobble > 0) p.wobble = Math.max(0, p.wobble - ms / 380);
+    }
+  }
+
+  /** Состояние каждого асыка расстановки: положение и статус (для синхронизации устройств). */
+  exportAsyks(count: number): AsykState[] {
+    const out: AsykState[] = [];
+    for (let i = 0; i < count; i++) {
+      const p = this.pieceByIndex(i);
+      if (!p || p.status === 'out') out.push([i, 0, 0, 0, 0]);
+      else out.push([i, round(p.body.position.x), round(p.body.position.y), round(p.body.angle, 1000), 1]);
+    }
+    return out;
+  }
+
+  /** Привести кон к присланному состоянию: сдвинуть, убрать выбитые, вернуть недостающие. */
+  importAsyks(states: AsykState[], spawns: AsykSpawn[]): void {
+    for (const [i, x, y, a, inZone] of states) {
+      const p = this.pieceByIndex(i);
+      if (inZone) {
+        let piece = p;
+        if (!piece || piece.status !== 'in') {
+          // у нас асык уже выбит/исчез, а у соперника он в коне — возвращаем
+          if (piece) this.removePiece(piece);
+          piece = this.addAsyk(spawns[i], i);
+        }
+        this.place(piece, x, y, a);
+      } else if (p && p.status === 'in') {
+        // у соперника асык выбит, а у нас ещё стоит — убираем (уже выбитые растворяются сами)
+        this.removePiece(p);
+      }
+    }
   }
 
   destroy(): void {
