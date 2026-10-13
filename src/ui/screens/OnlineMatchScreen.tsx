@@ -5,6 +5,7 @@ import { getMatchLayout } from '../../game/levels/matchLayouts';
 import { MatchRules } from '../../game/rules/MatchRules';
 import type { MatchConfig, MatchHud, MatchResult, Seat } from '../../game/types';
 import type { Room, RoomSnapshot } from '../../net/room';
+import { decideSync, totalOf } from '../../net/sync';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { PowerMeter, RotateHint, Toast } from '../game/GameOverlays';
@@ -20,8 +21,10 @@ interface Props {
   localSeat: Seat;
   /** Матч восстановлен после перезагрузки — запросить состояние у соперника. */
   restored: boolean;
-  /** Состояние, пришедшее вместе с матчем (вход в уже идущий матч). */
+  /** Состояние, пришедшее вместе с матчем или сохранённое до перезагрузки. */
   initialSync: MatchSyncState | null;
+  /** Сохранить снимок матча (после каждого броска). */
+  onSnapshot: (state: MatchSyncState) => void;
   muted: boolean;
   reducedMotion: boolean;
   onToggleMute: () => void;
@@ -31,6 +34,7 @@ interface Props {
 }
 
 const STALL_SYNC_MS = 5000;
+
 
 /** Онлайн-матч: этот экран управляет одним игроком, броски соперника приходят по сети. */
 export function OnlineMatchScreen(props: Props) {
@@ -42,6 +46,11 @@ export function OnlineMatchScreen(props: Props) {
   const [rematch, setRematch] = useState<'idle' | 'sent' | 'received'>('idle');
   const [opponentLeft, setOpponentLeft] = useState(false);
   const pendingSync = useRef(false);
+  /**
+   * Можно ли считать состояние этого экрана достоверным. После перезагрузки экран начинает с пустого
+   * кона и до получения синхронизации НЕ навязывает его сопернику (иначе обнулил бы чужой матч).
+   */
+  const authoritative = useRef(!props.restored || !!props.initialSync);
   const rematchRef = useRef(rematch);
   rematchRef.current = rematch;
   const propsRef = useRef(props);
@@ -74,13 +83,18 @@ export function OnlineMatchScreen(props: Props) {
   useEffect(() => {
     if (!engine) return;
     if (props.initialSync) engine.importMatchState(props.initialSync, true);
-    else if (props.restored) room.send({ t: 'syncRequest' });
+    // вернулись в матч — спрашиваем соперника: если он ушёл дальше, его состояние новее
+    if (props.restored) room.send({ t: 'syncRequest' });
   }, [engine]);
 
   // если синхронизация не пришла — играем с тем, что есть
   useEffect(() => {
     if (!syncing) return;
-    const t = window.setTimeout(() => setSyncing(false), 4000);
+    const t = window.setTimeout(() => {
+      // никто не ответил — у нас лучшее состояние из доступных (например, соперник тоже перезагрузился)
+      authoritative.current = true;
+      setSyncing(false);
+    }, 4000);
     return () => window.clearTimeout(t);
   }, [syncing]);
 
@@ -102,13 +116,22 @@ export function OnlineMatchScreen(props: Props) {
           engine.remoteThrowEnd(msg.e);
           break;
         case 'syncRequest':
-          pendingSync.current = true;
-          trySendSync();
+          if (authoritative.current) {
+            pendingSync.current = true;
+            trySendSync();
+          }
           break;
         case 'sync':
-          if (msg.matchId === matchId) {
-            engine.importMatchState(msg.state, true);
-            setSyncing(false);
+          if (msg.matchId !== matchId) break;
+          if (decideSync(authoritative.current, totalOf(msg.state), totalOf(engine.exportMatchState())) === 'apply') {
+            if (engine.importMatchState(msg.state, true)) {
+              authoritative.current = true;
+              setSyncing(false);
+            }
+          } else {
+            // соперник отстал (например, вернулся со старым снимком) — отвечаем своим, более новым состоянием
+            pendingSync.current = true;
+            trySendSync();
           }
           break;
         case 'rematch':
@@ -131,7 +154,7 @@ export function OnlineMatchScreen(props: Props) {
 
   /** Отправить состояние, когда этот экран между бросками (свой бросок не прерываем). */
   function trySendSync() {
-    if (!engine || !pendingSync.current) return;
+    if (!engine || !pendingSync.current || !authoritative.current) return;
     const phase = engine.getSnapshot().phase;
     if (phase !== 'READY' && phase !== 'ROUND_COMPLETE') return;
     pendingSync.current = false;
@@ -142,14 +165,24 @@ export function OnlineMatchScreen(props: Props) {
     trySendSync();
   });
 
+  // снимок матча после каждого броска — чтобы перезагрузка не обнуляла игру
+  const totalThrows = m?.totalThrows ?? 0;
+  useEffect(() => {
+    if (!engine || !authoritative.current) return;
+    const phase = engine.getSnapshot().phase;
+    if (phase === 'READY' || phase === 'ROUND_COMPLETE') propsRef.current.onSnapshot(engine.exportMatchState());
+  }, [engine, s?.phase, totalThrows]);
+
   // соперник вернулся в комнату — отправим ему актуальное состояние
   const opponentOnline = roomSnap.peers.some((p) => p.seat === opponentSeat);
   const wasOnline = useRef(opponentOnline);
   useEffect(() => {
     if (opponentOnline && !wasOnline.current) {
-      pendingSync.current = true;
       setOpponentLeft(false);
-      trySendSync();
+      if (authoritative.current) {
+        pendingSync.current = true;
+        trySendSync();
+      }
     }
     wasOnline.current = opponentOnline;
   }, [opponentOnline]);

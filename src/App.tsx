@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { sound } from './game/audio/sound';
 import { LEVELS } from './game/levels/levels';
 import type { MatchConfig, RoundResult, Seat } from './game/types';
@@ -10,7 +10,8 @@ import { HowToScreen } from './ui/screens/HowToScreen';
 import { LevelSelectScreen } from './ui/screens/LevelSelectScreen';
 import { MatchScreen } from './ui/screens/MatchScreen';
 import { MatchSetupScreen } from './ui/screens/MatchSetupScreen';
-import { RoomScreen } from './ui/screens/RoomScreen';
+// онлайн-часть (и библиотека Supabase) грузится отдельным фрагментом — только когда открывается комната
+const RoomScreen = lazy(() => import('./ui/screens/RoomScreen').then((m) => ({ default: m.RoomScreen })));
 import { makeClientId, makeRoomCode } from './net/protocol';
 import { saveRoomSession } from './net/session';
 import { MenuScreen } from './ui/screens/MenuScreen';
@@ -178,16 +179,26 @@ export function App() {
       );
     case 'ROOM':
       return (
-        <RoomScreen
-          key={route.code}
-          code={route.code}
-          defaultName={save.settings.onlineName}
-          muted={save.settings.muted}
-          reducedMotion={reducedMotion}
-          onToggleMute={toggleMute}
-          onRememberName={rememberOnlineName}
-          onExit={() => navigate({ name: 'MENU' })}
-        />
+        <Suspense
+          fallback={
+            <main className="page page--doc">
+              <p className="doc__lead" role="status">
+                Загружаем онлайн-режим…
+              </p>
+            </main>
+          }
+        >
+          <RoomScreen
+            key={route.code}
+            code={route.code}
+            defaultName={save.settings.onlineName}
+            muted={save.settings.muted}
+            reducedMotion={reducedMotion}
+            onToggleMute={toggleMute}
+            onRememberName={rememberOnlineName}
+            onExit={() => navigate({ name: 'MENU' })}
+          />
+        </Suspense>
       );
     case 'MATCH':
       if (!match) return null;

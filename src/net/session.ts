@@ -1,3 +1,4 @@
+import type { MatchSyncState } from '../game/engine/GameEngine';
 import type { MatchConfig, Seat } from '../game/types';
 
 /**
@@ -11,7 +12,8 @@ export interface RoomSession {
   /** Кон, выбранный хостом при создании комнаты. */
   layoutId: string;
   /** Текущий матч (после старта). */
-  match: { config: MatchConfig; matchId: number } | null;
+  /** state — последний снимок кона и счёта (после каждого броска): перезагрузка не обнуляет матч. */
+  match: { config: MatchConfig; matchId: number; state?: MatchSyncState } | null;
 }
 
 const key = (code: string) => `asyk-atu:room:${code}`;

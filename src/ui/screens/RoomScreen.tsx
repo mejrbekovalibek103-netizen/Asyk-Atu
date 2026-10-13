@@ -3,7 +3,8 @@ import type { MatchSyncState } from '../../game/engine/GameEngine';
 import { getMatchLayout } from '../../game/levels/matchLayouts';
 import type { MatchConfig, Seat } from '../../game/types';
 import { makeClientId } from '../../net/protocol';
-import { onlineAvailable, Room } from '../../net/room';
+import { onlineAvailable } from '../../net/config';
+import { getRoom, type Room } from '../../net/room';
 import { loadRoomSession, saveRoomSession, type RoomSession } from '../../net/session';
 import { Icon } from '../components/Icon';
 import { LevelPreview } from '../components/LevelPreview';
@@ -49,16 +50,17 @@ export function RoomScreen(props: Props) {
 
 function RoomLive(props: Props & { session: RoomSession }) {
   const { code, session } = props;
-  const room = useMemo(() => new Room(code, { clientId: session.clientId, seat: session.seat, name: session.name }), [code, session.clientId, session.seat, session.name]);
+  const room = useMemo(() => getRoom(code, { clientId: session.clientId, seat: session.seat, name: session.name }), [code, session.clientId, session.seat, session.name]);
   const snap = useSyncExternalStore(room.subscribe, room.getSnapshot);
   const [match, setMatch] = useState(session.match);
-  const [initialSync, setInitialSync] = useState<MatchSyncState | null>(null);
+  const [initialSync, setInitialSync] = useState<MatchSyncState | null>(session.match?.state ?? null);
   const restored = useRef(!!session.match);
   const matchRef = useRef(match);
   matchRef.current = match;
 
   useEffect(() => {
     room.connect();
+    if (import.meta.env.DEV) (window as unknown as { __asykRoom?: Room }).__asykRoom = room; // отладка в браузере
     return () => room.close();
   }, [room]);
 
@@ -128,6 +130,10 @@ function RoomLive(props: Props & { session: RoomSession }) {
         muted={props.muted}
         reducedMotion={props.reducedMotion}
         onToggleMute={props.onToggleMute}
+        onSnapshot={(state) => {
+          const cur = matchRef.current;
+          if (cur) persist({ ...cur, state });
+        }}
         onRematchStart={() => startMatch(true)}
         onLeave={exit}
       />

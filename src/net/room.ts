@@ -1,4 +1,5 @@
 import { createClient, type RealtimeChannel, type SupabaseClient } from '@supabase/supabase-js';
+import { SUPABASE_KEY, SUPABASE_URL } from './config';
 import type { Envelope, NetMessage, PeerInfo } from './protocol';
 
 /**
@@ -8,12 +9,6 @@ import type { Envelope, NetMessage, PeerInfo } from './protocol';
  * - presence — кто сейчас в комнате (имя и место за «столом»).
  * Базы данных и таблиц нет: сервер только пересылает сообщения.
  */
-
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined;
-
-/** Онлайн включён в этой сборке (заданы адрес проекта и публичный ключ). */
-export const onlineAvailable = !!(SUPABASE_URL && SUPABASE_KEY);
 
 let client: SupabaseClient | null = null;
 
@@ -40,6 +35,23 @@ export interface RoomSnapshot {
   peers: PeerInfo[];
 }
 
+const rooms = new Map<string, Room>();
+
+/**
+ * Один объект комнаты на пару «код + игрок». Повторный вызов (повторный рендер, горячая перезагрузка
+ * модулей, быстрый выход и вход) возвращает тот же объект и отменяет его отложенное закрытие, поэтому
+ * для одного кода никогда не создаётся два канала.
+ */
+export function getRoom(code: string, me: PeerInfo): Room {
+  const key = `${code}:${me.clientId}`;
+  let room = rooms.get(key);
+  if (!room) {
+    room = new Room(code, me, () => rooms.delete(key));
+    rooms.set(key, room);
+  }
+  return room;
+}
+
 export class Room {
   private channel: RealtimeChannel | null = null;
   private snapshot: RoomSnapshot = { status: 'connecting', peers: [] };
@@ -51,6 +63,7 @@ export class Room {
   constructor(
     readonly code: string,
     readonly me: PeerInfo,
+    private readonly onDisposed?: () => void,
   ) {}
 
   connect(): void {
@@ -60,7 +73,18 @@ export class Room {
       this.closeTimer = null;
     }
     if (this.channel) return;
-    const ch = getClient().channel(`asyk-atu:${this.code}`, {
+    const topic = `asyk-atu:${this.code}`;
+    // страховка: в клиенте остался закрывающийся канал с тем же именем — дожидаемся его удаления
+    const stale = getClient()
+      .getChannels()
+      .find((c) => c.topic === `realtime:${topic}`);
+    if (stale) {
+      void getClient()
+        .removeChannel(stale)
+        .then(() => this.connect());
+      return;
+    }
+    const ch = getClient().channel(topic, {
       config: { broadcast: { self: false, ack: false }, presence: { key: this.me.clientId, enabled: true } },
     });
 
@@ -148,6 +172,7 @@ export class Room {
     const ch = this.channel;
     this.channel = null;
     if (ch) await getClient().removeChannel(ch);
+    this.onDisposed?.();
   }
 
   private set(next: RoomSnapshot): void {

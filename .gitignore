@@ -5,3 +5,6 @@ dist
 .vite
 coverage
 .claude/
+.env
+.env.local
+.env.example

@@ -108,6 +108,8 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
   /** Воспроизведение броска соперника (онлайн). */
   private player: ThrowPlayer | null = null;
   private lastAimSentAt = 0;
+  /** Есть положение прицела, которое не успели отправить из-за ограничения частоты. */
+  private aimDirty = false;
   private replayStalled = false;
 
   private raf = 0;
@@ -370,6 +372,7 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
       }
       if (steps >= 24) this.accumulator = 0;
       this.runTasks();
+      if (this.aimDirty && this.phase === 'AIMING') this.sendAim(false);
       this.effects.update(dt);
       this.animateHand(dt);
       this.updateTrail();
@@ -542,7 +545,11 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
     const net = this.cb.net;
     if (!net || !this.localAim) return;
     const now = performance.now();
-    if (!force && now - this.lastAimSentAt < AIM_SEND_MS) return;
+    if (!force && now - this.lastAimSentAt < AIM_SEND_MS) {
+      this.aimDirty = true; // досылаем в ближайшем кадре, когда пауза пройдёт
+      return;
+    }
+    this.aimDirty = false;
     this.lastAimSentAt = now;
     net.onAim({ angle: Math.round(this.localAim.angle * 1000) / 1000, power: Math.round(this.localAim.power * 1000) / 1000 });
   }

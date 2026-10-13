@@ -5,7 +5,7 @@ import type { MatchConfig, Seat } from '../../game/types';
 import { AsykIcon } from '../components/AsykIcon';
 import { Icon } from '../components/Icon';
 import { LevelPreview } from '../components/LevelPreview';
-import { onlineAvailable } from '../../net/room';
+import { onlineAvailable } from '../../net/config';
 import { cleanName, NAME_MAX } from '../format';
 
 interface Props {
@@ -55,7 +55,13 @@ export function MatchSetupScreen({ initialNames, initialOnlineName, initialLayou
               ] as const
             ).map(([value, label]) => (
               <label key={value} className={`mode-switch__option${mode === value ? ' mode-switch__option--on' : ''}`}>
-                <input type="radio" name="mode" value={value} checked={mode === value} onChange={() => setMode(value)} className="sr-only" />
+                <input type="radio" name="mode" value={value} checked={mode === value} onChange={() => {
+                    setMode(value);
+                    // заранее подгружаем онлайн-часть игры, пока игрок вводит имя
+                    if (value === 'online') void import('./RoomScreen');
+                  }}
+                  className="sr-only"
+                />
                 <Icon name={value === 'local' ? 'users' : 'globe'} /> {label}
               </label>
             ))}
