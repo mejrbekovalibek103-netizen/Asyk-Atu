@@ -33,7 +33,18 @@ export type StarRule =
   | { type: 'score'; value: number }
   | { type: 'targetWithin'; throws: number };
 
-/** Расстановка: меловой кон и асыки в нём. Общая для испытаний и матчей. */
+/**
+ * Неподвижное препятствие на поле — камень. Прямоугольник с центром в (x, y);
+ * сақа и асыки отскакивают от него, а прямой бросок через камень невозможен.
+ */
+export interface Obstacle {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** Расстановка: меловой кон, асыки в нём и препятствия. Общая для испытаний и матчей. */
 export interface KonLayout {
   id: string;
   name: string;
@@ -43,6 +54,8 @@ export interface KonLayout {
   description: string;
   zone: Zone;
   asyks: AsykSpawn[];
+  /** Камни на поле (необязательно). */
+  obstacles?: Obstacle[];
 }
 
 /** Испытание одиночной игры: расстановка + число бросков, цель и звёзды. */
@@ -121,6 +134,8 @@ export interface MatchHud {
   /** Онлайн: за какого игрока этот экран (null — оба на одном устройстве). */
   localSeat: Seat | null;
   finished: boolean;
+  /** Одно устройство: ждём, пока ход примет следующий игрок (бросок заблокирован до «Готов»). */
+  handoff: boolean;
 }
 
 export type ModeHud = SoloHud | MatchHud;
@@ -164,6 +179,8 @@ export interface MatchConfig {
   first: Seat;
   /** Реванш: без жеребьёвки, первым бросает другой игрок. */
   rematch?: boolean;
+  /** Одно устройство: перед каждым ходом показывать экран «Передайте устройство». */
+  handoff?: boolean;
 }
 
 export interface MatchResult {

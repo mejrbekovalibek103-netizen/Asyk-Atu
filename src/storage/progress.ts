@@ -1,4 +1,7 @@
+import { LEVELS } from '../game/levels/levels';
+import { MATCH_LAYOUTS } from '../game/levels/matchLayouts';
 import type { RoundResult } from '../game/types';
+import { cleanName } from '../ui/format';
 
 /**
  * Локальное сохранение прогресса (localStorage).
@@ -33,6 +36,8 @@ export interface SaveData {
     /** Имена из последнего матча вдвоём. */
     duelNames: [string, string];
     duelLayout: string;
+    /** Показывать экран «Передайте устройство» между ходами (игра вдвоём на одном устройстве). */
+    duelHandoff: boolean;
     /** Имя для онлайн-матчей. */
     onlineName: string;
   };
@@ -43,24 +48,36 @@ export function emptySave(): SaveData {
     version: 1,
     levels: {},
     stats: { roundsPlayed: 0, throws: 0, hitThrows: 0, asyksKnocked: 0, bestScore: 0, bestKnocked: 0, bestCombo: 0 },
-    settings: { muted: false, tutorialDone: false, duelNames: ['', ''], duelLayout: 'ulken-kon', onlineName: '' },
+    settings: { muted: false, tutorialDone: false, duelNames: ['', ''], duelLayout: 'ulken-kon', duelHandoff: true, onlineName: '' },
   };
 }
 
-const str = (v: unknown) => (typeof v === 'string' ? v.slice(0, 32) : '');
-const num = (v: unknown, fallback = 0) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : fallback);
+/** Предел сохранённого числа: защита от подделанных гигантских значений в интерфейсе. */
+const NUM_MAX = 1_000_000_000;
+const num = (v: unknown, fallback = 0) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.min(v, NUM_MAX) : fallback);
 
-/** Безопасное чтение: повреждённые или чужие данные не ломают игру. */
+/** Размер строки сохранения, который мы вообще согласны разбирать. */
+const SAVE_MAX_CHARS = 100_000;
+
+const KNOWN_LEVELS = new Set(LEVELS.map((l) => l.id));
+const KNOWN_LAYOUTS = new Set(MATCH_LAYOUTS.map((l) => l.id));
+
+/**
+ * Безопасное чтение: повреждённые, подделанные или чужие данные не ломают игру.
+ * localStorage правит кто угодно через консоль браузера, поэтому проверяем всё: размер, типы, диапазоны,
+ * известные id уровней (ключи вроде `__proto__` не попадают в данные), имена очищаются как любой ввод.
+ */
 export function loadSave(): SaveData {
   const base = emptySave();
   try {
     const raw = globalThis.localStorage?.getItem(KEY);
-    if (!raw) return base;
+    if (!raw || raw.length > SAVE_MAX_CHARS) return base;
     const data = JSON.parse(raw) as Partial<SaveData>;
-    if (!data || typeof data !== 'object') return base;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return base;
     const levels: Record<string, LevelProgress> = {};
-    for (const [id, lp] of Object.entries(data.levels ?? {})) {
-      if (!lp || typeof lp !== 'object') continue;
+    const savedLevels = data.levels && typeof data.levels === 'object' && !Array.isArray(data.levels) ? data.levels : {};
+    for (const [id, lp] of Object.entries(savedLevels)) {
+      if (!KNOWN_LEVELS.has(id) || !lp || typeof lp !== 'object') continue;
       levels[id] = {
         bestScore: num(lp.bestScore),
         bestKnocked: num(lp.bestKnocked),
@@ -85,9 +102,10 @@ export function loadSave(): SaveData {
       settings: {
         muted: !!data.settings?.muted,
         tutorialDone: !!data.settings?.tutorialDone,
-        duelNames: [str(data.settings?.duelNames?.[0]), str(data.settings?.duelNames?.[1])],
-        duelLayout: str(data.settings?.duelLayout) || base.settings.duelLayout,
-        onlineName: str(data.settings?.onlineName),
+        duelNames: [cleanName(data.settings?.duelNames?.[0], ''), cleanName(data.settings?.duelNames?.[1], '')],
+        duelLayout: KNOWN_LAYOUTS.has(data.settings?.duelLayout as string) ? (data.settings!.duelLayout as string) : base.settings.duelLayout,
+        duelHandoff: data.settings?.duelHandoff === undefined ? true : !!data.settings.duelHandoff,
+        onlineName: cleanName(data.settings?.onlineName, ''),
       },
     };
   } catch {

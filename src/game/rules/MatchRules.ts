@@ -4,10 +4,10 @@ import type { Piece } from '../physics/PhysicsWorld';
 import type { AsykPalette } from '../render/asykShape';
 import type { MatchConfig, MatchHud, MatchResult, Seat } from '../types';
 import { plural } from '../../ui/format';
+import { MATCH_MAX_THROWS, parseMatchState, type MatchState } from './matchState';
 import type { NextStep, Rules, RulesHost } from './Rules';
 
-/** Страховка от бесконечного матча: максимум бросков на двоих (чётное — поровну каждому). */
-export const MATCH_MAX_THROWS = 30;
+export { MATCH_MAX_THROWS };
 
 /** Оформление игроков: у каждого свой крашеный сақа и браслет. */
 export const PLAYER_STYLE: readonly [PlayerStyle, PlayerStyle] = [
@@ -24,16 +24,7 @@ interface PlayerStyle {
 
 const other = (s: Seat): Seat => (s === 0 ? 1 : 0);
 
-/** Счёт матча для синхронизации устройств. */
-export interface MatchState {
-  current: Seat;
-  turnId: number;
-  knocked: [number, number];
-  throws: [number, number];
-  bestCombo: [number, number];
-  total: number;
-  finished: boolean;
-}
+export type { MatchState };
 
 /**
  * Матч вдвоём:
@@ -56,6 +47,10 @@ export class MatchRules implements Rules {
   private reason: MatchResult['reason'] = 'cleared';
   private finished = false;
   private started = false;
+  /** Передача устройства нужна только при игре вдвоём на одном экране. */
+  private readonly handoffEnabled: boolean;
+  /** Ждём, пока следующий игрок нажмёт «Готов»: до этого бросок невозможен. */
+  private handoffPending: boolean;
 
   constructor(
     private readonly config: MatchConfig,
@@ -63,6 +58,8 @@ export class MatchRules implements Rules {
     private readonly localSeat: Seat | null = null,
   ) {
     this.current = config.first;
+    this.handoffEnabled = !!config.handoff && localSeat === null;
+    this.handoffPending = this.handoffEnabled;
   }
 
   attach(host: RulesHost): void {
@@ -82,11 +79,16 @@ export class MatchRules implements Rules {
   }
 
   canThrow(): boolean {
-    return !this.finished && (this.localSeat === null || this.localSeat === this.current);
+    return !this.finished && !this.handoffPending && (this.localSeat === null || this.localSeat === this.current);
   }
 
   blockedHint(): string {
+    if (this.handoffPending) return `Передайте устройство: ходит ${this.name(this.current)}. Нажмите «Готов»`;
     return `Сейчас бросает ${this.name(this.current)}`;
+  }
+
+  confirmHandoff(): void {
+    this.handoffPending = false;
   }
 
   onLaunch(): number {
@@ -141,6 +143,7 @@ export class MatchRules implements Rules {
     // строго по очереди: после каждого броска ход переходит
     this.current = other(this.current);
     this.turnId += 1;
+    this.handoffPending = this.handoffEnabled;
     return { kind: 'continue' };
   }
 
@@ -176,6 +179,7 @@ export class MatchRules implements Rules {
     this.knockedIds.clear();
     this.reason = 'cleared';
     this.finished = false;
+    this.handoffPending = this.handoffEnabled;
   }
 
   hud(): MatchHud {
@@ -193,6 +197,7 @@ export class MatchRules implements Rules {
       totalAsyks: this.host.layout.asyks.length,
       localSeat: this.localSeat,
       finished: this.finished,
+      handoff: this.handoffPending && !this.finished,
     };
   }
 
@@ -208,9 +213,10 @@ export class MatchRules implements Rules {
     };
   }
 
+  /** Принимает только проверенное состояние: данные приходят из сети и из хранилища браузера. */
   importState(raw: unknown): void {
-    const st = raw as MatchState;
-    if (!st || (st.current !== 0 && st.current !== 1)) return;
+    const st = parseMatchState(raw, this.host.layout.asyks.length);
+    if (!st) return;
     this.current = st.current;
     this.turnId = Math.max(this.turnId, st.turnId) + 1;
     this.knocked = [...st.knocked];
@@ -218,6 +224,8 @@ export class MatchRules implements Rules {
     this.bestCombo = [...st.bestCombo];
     this.total = st.total;
     this.started = true;
+    // после синхронизации ход уже начат: экран передачи устройства не нужен (в онлайне он и не используется)
+    this.handoffPending = false;
   }
 
   sakaPalette(): AsykPalette {

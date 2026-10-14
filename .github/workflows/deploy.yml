@@ -5,10 +5,8 @@ on:
     branches: [main]
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+# По умолчанию у задач нет прав; каждой выдаётся только необходимое.
+permissions: {}
 
 concurrency:
   group: pages
@@ -17,29 +15,54 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # Сторонние действия закреплены по контрольной сумме коммита: подмена тега в чужом репозитории
+      # не изменит то, что выполняется в нашей сборке. Обновления предлагает Dependabot.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      # --ignore-scripts: скрипты установки зависимостей не выполняются (защита от атаки через цепочку поставок)
+      - run: npm ci --ignore-scripts
       - run: npm test
       - run: npm run build
         env:
           # онлайн-матчи: публичные значения из Settings → Secrets and variables → Actions → Variables
           VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
           path: dist
 
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+
+  # Проверка зависимостей на известные уязвимости. Не блокирует публикацию (новая уязвимость в чужом
+  # пакете не должна останавливать сайт), но красный статус сразу виден во вкладке Actions.
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - run: npm audit --omit=dev --audit-level=high

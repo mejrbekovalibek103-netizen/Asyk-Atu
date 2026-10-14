@@ -6,6 +6,7 @@ import { makeClientId } from '../../net/protocol';
 import { onlineAvailable } from '../../net/config';
 import { getRoom, type Room } from '../../net/room';
 import { loadRoomSession, saveRoomSession, type RoomSession } from '../../net/session';
+import { totalOf } from '../../net/sync';
 import { Icon } from '../components/Icon';
 import { LevelPreview } from '../components/LevelPreview';
 import { cleanName, NAME_MAX } from '../format';
@@ -66,12 +67,20 @@ function RoomLive(props: Props & { session: RoomSession }) {
 
   const persist = (m: RoomSession['match']) => saveRoomSession(code, { ...session, match: m });
 
+  /** Самый свежий сохранённый снимок текущего матча (из sessionStorage, а не из памяти компонента). */
+  const readSnapshot = (): MatchSyncState | null => {
+    const stored = loadRoomSession(code)?.match;
+    const cur = matchRef.current;
+    return stored && cur && stored.matchId === cur.matchId ? (stored.state ?? null) : null;
+  };
+
   // старт матча и вход в уже идущий матч
   useEffect(
     () =>
-      room.onMessage((msg) => {
+      room.onMessage((msg, ctx) => {
         const cur = matchRef.current;
-        if (msg.t === 'start' && (!cur || msg.matchId > cur.matchId)) {
+        // начать матч может только хозяин комнаты (место 0), и только гость его слушает
+        if (msg.t === 'start' && ctx.seat === 0 && session.seat === 1 && (!cur || msg.matchId > cur.matchId)) {
           const m = { config: msg.config, matchId: msg.matchId };
           restored.current = false;
           setInitialSync(null);
@@ -88,7 +97,7 @@ function RoomLive(props: Props & { session: RoomSession }) {
     [room],
   );
 
-  const opponent = snap.peers.find((p) => p.seat !== session.seat) ?? null;
+  const opponent = snap.peer;
   const isHost = session.seat === 0;
 
   /** Хост бросает жребий и начинает матч (или реванш: первым — другой игрок). */
@@ -130,9 +139,14 @@ function RoomLive(props: Props & { session: RoomSession }) {
         muted={props.muted}
         reducedMotion={props.reducedMotion}
         onToggleMute={props.onToggleMute}
+        readSnapshot={readSnapshot}
         onSnapshot={(state) => {
           const cur = matchRef.current;
-          if (cur) persist({ ...cur, state });
+          if (!cur) return;
+          // более ранний снимок (например, у только что пересозданного экрана) не затирает более свежий
+          const stored = readSnapshot();
+          if (stored && totalOf(stored) > totalOf(state)) return;
+          persist({ ...cur, state });
         }}
         onRematchStart={() => startMatch(true)}
         onLeave={exit}

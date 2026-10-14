@@ -107,7 +107,7 @@ export function App() {
 
   const startMatch = useCallback(
     (config: MatchConfig) => {
-      updateSave((s) => ({ ...s, settings: { ...s.settings, duelNames: config.players, duelLayout: config.layoutId } }));
+      updateSave((s) => ({ ...s, settings: { ...s.settings, duelNames: config.players, duelLayout: config.layoutId, duelHandoff: !!config.handoff } }));
       setMatch((m) => ({ id: (m?.id ?? 0) + 1, config }));
       navigate({ name: 'MATCH' });
     },
@@ -172,6 +172,7 @@ export function App() {
           initialNames={save.settings.duelNames}
           initialOnlineName={save.settings.onlineName}
           initialLayoutId={save.settings.duelLayout}
+          initialHandoff={save.settings.duelHandoff}
           onStart={startMatch}
           onCreateRoom={createRoom}
           onBack={() => navigate({ name: 'MENU' })}

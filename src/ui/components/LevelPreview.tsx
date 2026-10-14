@@ -17,6 +17,19 @@ export function LevelPreview({ level }: { level: KonLayout }) {
       ) : (
         <circle cx={z.cx} cy={z.cy} r={z.r} fill="rgba(255,248,225,0.08)" stroke="#fbf8ef" strokeWidth="7" />
       )}
+      {(level.obstacles ?? []).map((o, i) => (
+        <rect
+          key={`s${i}`}
+          x={o.x - o.w / 2}
+          y={o.y - o.h / 2}
+          width={o.w}
+          height={o.h}
+          rx={Math.min(o.w, o.h) * 0.32}
+          fill="#8d8b85"
+          stroke="rgba(40,38,34,0.6)"
+          strokeWidth="3"
+        />
+      ))}
       {level.asyks.map((a, i) => (
         <path
           key={i}

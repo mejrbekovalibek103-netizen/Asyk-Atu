@@ -37,20 +37,52 @@ export interface Envelope {
 
 const ROOM_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // без похожих 0/O, 1/I/L
 
-/** Короткий код комнаты, удобный для диктовки: 6 символов ≈ 900 млн вариантов. */
-export function makeRoomCode(rnd: () => number = Math.random): string {
+/**
+ * Длина кода комнаты. Код — единственный «секрет» комнаты (по нему открывается канал), поэтому он длинный:
+ * 31^10 ≈ 8·10^14 вариантов (≈ 49 бит). Перебрать такое число каналов нереально.
+ */
+export const ROOM_CODE_LENGTH = 10;
+
+export type RandomBytes = (n: number) => Uint8Array;
+
+/** Криптостойкие случайные байты браузера (не Math.random: тот предсказуем по нескольким выходам). */
+export const cryptoBytes: RandomBytes = (n) => {
+  const a = new Uint8Array(n);
+  crypto.getRandomValues(a);
+  return a;
+};
+
+/**
+ * Код комнаты: символы выбираются из криптостойкого источника без смещения
+ * (байты ≥ 248 отбрасываются, чтобы остаток от деления на 31 был равномерным).
+ */
+export function makeRoomCode(bytes: RandomBytes = cryptoBytes): string {
+  const limit = 256 - (256 % ROOM_ALPHABET.length);
   let s = '';
-  for (let i = 0; i < 6; i++) s += ROOM_ALPHABET[Math.floor(rnd() * ROOM_ALPHABET.length)];
+  while (s.length < ROOM_CODE_LENGTH) {
+    for (const b of bytes(ROOM_CODE_LENGTH * 2)) {
+      if (b < limit) {
+        s += ROOM_ALPHABET[b % ROOM_ALPHABET.length];
+        if (s.length === ROOM_CODE_LENGTH) break;
+      }
+    }
+  }
   return s;
 }
 
+/** Приводит введённый или пришедший по ссылке код к каноническому виду; неверный код → null. */
 export function normalizeRoomCode(raw: string): string | null {
   const code = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
-  return code.length === 6 && [...code].every((c) => ROOM_ALPHABET.includes(c)) ? code : null;
+  return code.length === ROOM_CODE_LENGTH && [...code].every((c) => ROOM_ALPHABET.includes(c)) ? code : null;
 }
 
-export function makeClientId(): string {
-  const a = new Uint8Array(8);
-  crypto.getRandomValues(a);
-  return Array.from(a, (b) => b.toString(16).padStart(2, '0')).join('');
+/** Код для показа человеку: ABCDE-FGHJK. */
+export function formatRoomCode(code: string): string {
+  return `${code.slice(0, ROOM_CODE_LENGTH / 2)}-${code.slice(ROOM_CODE_LENGTH / 2)}`;
+}
+
+export const CLIENT_ID_RE = /^[0-9a-f]{16}$/;
+
+export function makeClientId(bytes: RandomBytes = cryptoBytes): string {
+  return Array.from(bytes(8), (b) => b.toString(16).padStart(2, '0')).join('');
 }

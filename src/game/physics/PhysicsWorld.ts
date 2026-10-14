@@ -1,7 +1,7 @@
 import Matter from 'matter-js';
 import { ASYK_H, ASYK_W, CURB, PHYS, SAKA_H, SAKA_W, WORLD_H, WORLD_W } from '../config';
 import { zoneContains } from '../levels/zone';
-import type { AsykFace, AsykSpawn, PieceKind, Vec2, Zone } from '../types';
+import type { AsykFace, AsykSpawn, Obstacle, PieceKind, Vec2, Zone } from '../types';
 import { angularFrictionStep, frictionStep } from './friction';
 
 const { Engine, Bodies, Body, Composite, Events } = Matter;
@@ -39,6 +39,7 @@ export type ContactType = 'saka-asyk' | 'asyk-asyk' | 'wall';
 export type AsykState = [number, number, number, number, 0 | 1];
 
 const round = (v: number, k = 100) => Math.round(v * k) / k;
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 export interface ContactEvent {
   x: number;
@@ -93,6 +94,21 @@ export class PhysicsWorld {
       Bodies.rectangle(WORLD_W / 2, CURB - T / 2, WORLD_W + 2 * T, T, opts),
       Bodies.rectangle(WORLD_W / 2, WORLD_H + T / 2, WORLD_W + 2 * T, T, opts),
     ]);
+  }
+
+  /** Камни: статические тела той же категории, что и бордюр (выбитые асыки тоже от них отскакивают). */
+  addObstacles(obstacles: readonly Obstacle[]): void {
+    for (const o of obstacles) {
+      const body = Bodies.rectangle(o.x, o.y, o.w, o.h, {
+        isStatic: true,
+        chamfer: { radius: Math.min(o.w, o.h) * 0.32 },
+        restitution: PHYS.restitution.wall,
+        friction: 0.2,
+        label: 'obstacle',
+        collisionFilter: { category: CAT.WALL, mask: CAT.SAKA | CAT.ASYK | CAT.OUT },
+      });
+      Composite.add(this.engine.world, body);
+    }
   }
 
   addAsyks(spawns: AsykSpawn[]): void {
@@ -247,9 +263,10 @@ export class PhysicsWorld {
     return index === -1 ? (this.saka ?? undefined) : this.pieces.find((p) => p.index === index);
   }
 
-  /** Поставить тело в точку без скорости (воспроизведение записи, синхронизация). */
+  /** Поставить тело в точку без скорости (воспроизведение записи, синхронизация). Неверные числа игнорируются. */
   place(p: Piece, x: number, y: number, angle: number): void {
-    Body.setPosition(p.body, { x, y });
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(angle)) return;
+    Body.setPosition(p.body, { x: clamp(x, -50, WORLD_W + 50), y: clamp(y, -50, WORLD_H + 50) });
     Body.setAngle(p.body, angle);
     Body.setVelocity(p.body, { x: 0, y: 0 });
     Body.setAngularVelocity(p.body, 0);
@@ -274,13 +291,21 @@ export class PhysicsWorld {
     return out;
   }
 
-  /** Привести кон к присланному состоянию: сдвинуть, убрать выбитые, вернуть недостающие. */
-  importAsyks(states: AsykState[], spawns: AsykSpawn[]): void {
+  /**
+   * Привести кон к присланному состоянию: сдвинуть, убрать выбитые.
+   * `resurrect` — разрешено ли возвращать асыки, которые у нас уже выбиты. Разрешается только для своих
+   * данных (сохранение) и для вернувшегося игрока, у которого ещё нет достоверного состояния. Итог
+   * чужого броска возвращать выбитые асыки НЕ может: иначе соперник мог бы «воскресить» их.
+   */
+  importAsyks(states: AsykState[], spawns: AsykSpawn[], resurrect = true): void {
     for (const [i, x, y, a, inZone] of states) {
+      if (!Number.isInteger(i) || i < 0 || i >= spawns.length) continue;
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(a)) continue;
       const p = this.pieceByIndex(i);
       if (inZone) {
         let piece = p;
         if (!piece || piece.status !== 'in') {
+          if (!resurrect) continue;
           // у нас асык уже выбит/исчез, а у соперника он в коне — возвращаем
           if (piece) this.removePiece(piece);
           piece = this.addAsyk(spawns[i], i);

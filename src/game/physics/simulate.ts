@@ -18,7 +18,10 @@ export interface SimResult {
  */
 export function simulateThrow(level: LevelConfig, aim: Aim, world?: PhysicsWorld): SimResult {
   const w = world ?? new PhysicsWorld();
-  if (!world) w.addAsyks(level.asyks);
+  if (!world) {
+    w.addObstacles(level.obstacles ?? []);
+    w.addAsyks(level.asyks);
+  }
   const p = throwParams(aim, Math.random, false);
   w.launchSaka(THROW_ORIGIN, p.angle, p.speed, p.spin);
 

@@ -1,0 +1,16 @@
+version: 2
+updates:
+  # зависимости проекта: еженедельные запросы с обновлениями (и с исправлениями уязвимостей)
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+  # действия GitHub Actions закреплены по контрольной сумме — Dependabot предлагает новые
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

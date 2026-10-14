@@ -1,5 +1,6 @@
-import { ASYK_H, ASYK_W, CURB, KNOCKOUT_FADE_MS, SAKA_H, SAKA_W, THROW_ORIGIN, WORLD_H, WORLD_W } from '../config';
+import { ASYK_H, ASYK_W, KNOCKOUT_FADE_MS, SAKA_H, SAKA_W, THROW_ORIGIN, WORLD_H, WORLD_W } from '../config';
 import { aimDirection, type Aim } from '../physics/aim';
+import { distanceToObstruction } from '../physics/clip';
 import type { Piece } from '../physics/PhysicsWorld';
 import type { KonLayout, Phase, Vec2 } from '../types';
 import type { AsykPalette } from './asykShape';
@@ -142,7 +143,7 @@ export class Renderer {
     const ctx = c.getContext('2d');
     if (!ctx) return;
     this.worldTransform(ctx);
-    drawCourtyard(ctx, this.layout.zone, this.visibleRect());
+    drawCourtyard(ctx, this.layout.zone, this.layout.obstacles ?? [], this.visibleRect());
     this.bg = c;
     this.bgDirty = false;
   }
@@ -220,8 +221,8 @@ export class Renderer {
   private drawAim(ctx: CanvasRenderingContext2D, aim: Aim, t: number): void {
     const dir = aimDirection(aim.angle);
     const o = THROW_ORIGIN;
-    // пунктир обрезается у бордюра: дальше сақа отскочит (прогноз отскока не рисуем — он зависит от удара)
-    const wall = distanceToCurb(o, dir);
+    // пунктир обрезается у бордюра или камня: дальше сақа отскочит (прогноз отскока не рисуем — он зависит от удара)
+    const wall = distanceToObstruction(o, dir, this.layout);
     const hitsWall = aim.slide > wall;
     const len = Math.min(aim.slide, wall);
     const p = aim.power;
@@ -371,16 +372,6 @@ export class Renderer {
       ctx.restore();
     }
   }
-}
-
-/** Расстояние от точки броска до бордюра по направлению dir (с учётом половины ширины сақа). */
-function distanceToCurb(o: Vec2, dir: Vec2): number {
-  const pad = CURB + SAKA_H / 2;
-  let t = Infinity;
-  if (dir.x > 1e-6) t = Math.min(t, (WORLD_W - pad - o.x) / dir.x);
-  if (dir.x < -1e-6) t = Math.min(t, (pad - o.x) / dir.x);
-  if (dir.y < -1e-6) t = Math.min(t, (pad - o.y) / dir.y);
-  return Math.max(0, t);
 }
 
 function mix(a: number[], b: number[], t: number): number[] {

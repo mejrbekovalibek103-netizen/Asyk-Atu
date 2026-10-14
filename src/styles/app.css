@@ -1826,3 +1826,74 @@ button {
   font-weight: 800;
   box-shadow: var(--shadow-lg);
 }
+
+/* =========================================================
+   Передача устройства (игра вдвоём на одном экране)
+   ========================================================= */
+
+.handoff {
+  position: absolute;
+  left: 50%;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  width: min(300px, calc(100% - 32px));
+  padding: 16px 18px 18px;
+  text-align: center;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.97);
+  border-bottom: 5px solid var(--player);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.3);
+  transform: translate(-50%, -50%);
+  animation: pop-in 0.3s cubic-bezier(0.2, 1.3, 0.4, 1) both;
+}
+.handoff__label {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.handoff__name {
+  margin-bottom: 8px;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 26px;
+  color: var(--player);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.check-row {
+  margin-top: 12px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1.5px solid var(--line);
+  border-radius: 14px;
+  cursor: pointer;
+}
+.check-row input {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-top: 2px;
+  accent-color: var(--sky);
+}
+.check-row span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.check-row small {
+  font-size: 13px;
+  color: var(--muted);
+}
+.check-row:has(input:focus-visible) {
+  box-shadow: var(--focus);
+}

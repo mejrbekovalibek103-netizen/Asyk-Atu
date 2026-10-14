@@ -27,6 +27,30 @@ export function PlayerCard({ seat, hud, offline = false }: { seat: Seat; hud: Ma
 }
 
 /**
+ * Одно устройство: карточка «Передайте устройство». Пока она на экране, бросок заблокирован,
+ * а кон виден — следующий игрок успевает рассмотреть расстановку, предыдущий не бросит по ошибке.
+ */
+export function HandoffCard({ hud, y, onReady }: { hud: MatchHud; y: number; onReady: () => void }) {
+  const p = hud.players[hud.current];
+  const first = hud.totalThrows === 0;
+  return (
+    <div
+      key={hud.turnId}
+      className="handoff"
+      style={{ top: y, '--player': PLAYER_STYLE[hud.current].color } as React.CSSProperties}
+      role="group"
+      aria-label={`Передайте устройство игроку ${p.name}`}
+    >
+      <span className="handoff__label">{first ? 'Первым бросает' : 'Передайте устройство'}</span>
+      <span className="handoff__name">{p.name}</span>
+      <button className="btn btn--primary btn--block" onClick={onReady} data-autofocus autoFocus>
+        Готов — бросаю
+      </button>
+    </div>
+  );
+}
+
+/**
  * Крупная надпись при каждой смене хода. На одном устройстве — «Ход: имя» (сигнал передать телефон),
  * в онлайне — «Ваш ход» или «Ход соперника».
  */

@@ -217,6 +217,13 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
     return this.physics.time;
   }
 
+  /** Одно устройство: следующий игрок готов — снимаем блокировку броска. */
+  confirmHandoff(): void {
+    this.rules.confirmHandoff?.();
+    this.message = null; // подсказка «Передайте устройство» больше не нужна
+    this.emit();
+  }
+
   /** Прицел на экране: свой, пока тянем, или соперника, пока он целится. */
   get aim(): Aim | null {
     if (this.phase === 'AIMING') return this.localAim;
@@ -505,7 +512,7 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
     this.player = null;
     // итоговое состояние соперника — истина: досчитываем выбитые, которых не было в событиях
     for (const [i, , , , inZone] of end.final) if (!inZone) this.knockRemote(i);
-    this.physics.importAsyks(end.final, this.layout.asyks);
+    this.physics.importAsyks(end.final, this.layout.asyks, false);
     const saka = this.physics.saka;
     if (end.saka && saka) this.physics.place(saka, end.saka[0], end.saka[1], end.saka[2]);
     this.resolveThrow();
@@ -521,7 +528,7 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
    * Обычно — только между бросками; `force` — прервать застрявшее воспроизведение
    * (например, соперник переподключился, и часть записи броска потерялась).
    */
-  importMatchState(st: MatchSyncState, force = false): boolean {
+  importMatchState(st: MatchSyncState, force = false, trusted = true): boolean {
     if (this.phase === 'ROUND_COMPLETE') return false;
     if (this.phase !== 'READY') {
       if (!force || this.recorder) return false; // свой бросок не прерываем
@@ -534,7 +541,7 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
       this.phase = 'READY';
       this.hand = { offset: 0, angle: 0, open: 0, sakaInHand: true, reload: 0 };
     }
-    this.physics.importAsyks(st.asyks, this.layout.asyks);
+    this.physics.importAsyks(st.asyks, this.layout.asyks, trusted);
     this.rules.importState?.(st.rules);
     this.remoteAim = null;
     this.emit();
@@ -725,6 +732,7 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
 
   private buildWorld(): PhysicsWorld {
     const w = new PhysicsWorld();
+    w.addObstacles(this.layout.obstacles ?? []);
     w.addAsyks(this.layout.asyks);
     return w;
   }

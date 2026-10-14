@@ -12,6 +12,7 @@ interface Props {
   initialNames: [string, string];
   initialOnlineName: string;
   initialLayoutId: string;
+  initialHandoff: boolean;
   onStart: (config: MatchConfig) => void;
   /** Онлайн: создать комнату и получить ссылку для друга. */
   onCreateRoom: (name: string, layoutId: string) => void;
@@ -20,10 +21,11 @@ interface Props {
 
 type Mode = 'local' | 'online';
 
-export function MatchSetupScreen({ initialNames, initialOnlineName, initialLayoutId, onStart, onCreateRoom, onBack }: Props) {
+export function MatchSetupScreen({ initialNames, initialOnlineName, initialLayoutId, initialHandoff, onStart, onCreateRoom, onBack }: Props) {
   const [names, setNames] = useState<[string, string]>(initialNames);
   const [onlineName, setOnlineName] = useState(initialOnlineName || initialNames[0]);
   const [layoutId, setLayoutId] = useState(initialLayoutId);
+  const [handoff, setHandoff] = useState(initialHandoff);
   const [mode, setMode] = useState<Mode>('local');
   const online = mode === 'online';
 
@@ -32,7 +34,7 @@ export function MatchSetupScreen({ initialNames, initialOnlineName, initialLayou
     if (players[0] === players[1]) players[1] = `${players[1]} 2`;
     // жеребьёвка: кто бросает первым
     const first: Seat = Math.random() < 0.5 ? 0 : 1;
-    onStart({ layoutId, players, first });
+    onStart({ layoutId, players, first, handoff });
   };
 
   return (
@@ -139,6 +141,13 @@ export function MatchSetupScreen({ initialNames, initialOnlineName, initialLayou
               ))}
             </div>
             <p className="setup__hint">У каждого свой крашеный сақа: красный и фиолетовый.</p>
+            <label className="check-row">
+              <input type="checkbox" checked={handoff} onChange={(e) => setHandoff(e.target.checked)} />
+              <span>
+                <b>Экран «Передайте устройство»</b>
+                <small>Перед каждым ходом игра ждёт кнопку «Готов»: предыдущий игрок не бросит второй раз по ошибке.</small>
+              </span>
+            </label>
           </fieldset>
           )}
 

@@ -10,8 +10,26 @@ export function plural(n: number, forms: [string, string, string]): string {
 
 export const NAME_MAX = 16;
 
-/** Имя игрока: без лишних пробелов, не длиннее NAME_MAX, пустое → fallback. */
-export function cleanName(raw: string, fallback: string): string {
-  const s = raw.replace(/\s+/g, ' ').trim().slice(0, NAME_MAX);
-  return s || fallback;
+/** Сколько символов вообще рассматриваем: огромные строки отбрасываем до дорогой обработки. */
+const NAME_RAW_MAX = 100;
+
+/**
+ * Безопасное имя игрока. Применяется и к своему вводу, и ко ВСЕМУ, что пришло от соперника или из хранилища.
+ *
+ * - не строка → fallback;
+ * - нормализация Unicode (NFC);
+ * - удаляются управляющие, «невидимые» и форматирующие символы (в том числе U+202E «переворот текста»,
+ *   нулевой ширины, разделители строк), частные и неназначенные коды: ими подделывают надписи;
+ * - пробелы схлопываются, длина — не больше NAME_MAX символов (по кодовым точкам, суррогаты не режутся).
+ */
+export function cleanName(raw: unknown, fallback: string): string {
+  if (typeof raw !== 'string') return fallback;
+  const s = raw
+    .slice(0, NAME_RAW_MAX)
+    .normalize('NFC')
+    .replace(/[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Cs}\p{Zl}\p{Zp}]/gu, '')
+    .replace(/\s+/gu, ' ')
+    .trim();
+  const cut = Array.from(s).slice(0, NAME_MAX).join('').trim();
+  return cut || fallback;
 }

@@ -1,5 +1,5 @@
 import { CURB, THROW_LINE_Y, THROW_ORIGIN, WORLD_H, WORLD_W } from '../config';
-import type { Zone } from '../types';
+import type { Obstacle, Zone } from '../types';
 
 /** Детерминированный генератор случайных чисел — фон одинаков при каждой перерисовке. */
 function mulberry32(seed: number): () => number {
@@ -87,6 +87,69 @@ export function drawZone(ctx: CanvasRenderingContext2D, zone: Zone, rnd: () => n
   ctx.fillStyle = 'rgba(252, 250, 244, 0.55)';
   ctx.fillText('КОН', lx, ly);
   ctx.restore();
+}
+
+/**
+ * Камень: неровный валун, вписанный в прямоугольник физического тела (форма и размер совпадают
+ * со столкновениями), с тенью, бликом, трещинами и пятнами мха.
+ */
+function drawObstacles(ctx: CanvasRenderingContext2D, obstacles: readonly Obstacle[]): void {
+  obstacles.forEach((o, i) => {
+    const rnd = mulberry32(777 + i * 131 + Math.round(o.x * 3 + o.y));
+    const hw = o.w / 2;
+    const hh = o.h / 2;
+    const r = Math.min(o.w, o.h) * 0.32;
+    // контур: скруглённый прямоугольник с лёгкой неровностью
+    const blob = (dx: number, dy: number, grow = 0) => {
+      ctx.beginPath();
+      ctx.roundRect(o.x - hw + dx - grow, o.y - hh + dy - grow, o.w + grow * 2, o.h + grow * 2, r + grow);
+    };
+    ctx.save();
+    // тень
+    ctx.fillStyle = 'rgba(25, 20, 12, 0.3)';
+    blob(11, 15, 3);
+    ctx.fill();
+    // основной объём
+    const g = ctx.createLinearGradient(o.x - hw, o.y - hh, o.x + hw, o.y + hh);
+    g.addColorStop(0, '#c9c7c0');
+    g.addColorStop(0.55, '#9b9992');
+    g.addColorStop(1, '#6f6d68');
+    ctx.fillStyle = g;
+    blob(0, 0);
+    ctx.fill();
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = 'rgba(40, 38, 34, 0.55)';
+    ctx.stroke();
+    ctx.clip();
+    // грани и трещины
+    ctx.strokeStyle = 'rgba(50, 48, 44, 0.4)';
+    ctx.lineWidth = 2;
+    for (let k = 0; k < 3; k++) {
+      ctx.beginPath();
+      let x = o.x - hw + rnd() * o.w;
+      let y = o.y - hh + rnd() * o.h;
+      ctx.moveTo(x, y);
+      for (let s = 0; s < 4; s++) {
+        x += (rnd() - 0.5) * 36;
+        y += (rnd() - 0.2) * 22;
+        ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+    // мох сверху-слева
+    ctx.fillStyle = 'rgba(96, 140, 60, 0.55)';
+    for (let k = 0; k < 6; k++) {
+      ctx.beginPath();
+      ctx.ellipse(o.x - hw * 0.7 + rnd() * hw * 1.2, o.y - hh * 0.8 + rnd() * hh * 0.5, 8 + rnd() * 12, 4 + rnd() * 6, rnd() * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // блик
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.28)';
+    ctx.beginPath();
+    ctx.ellipse(o.x - hw * 0.35, o.y - hh * 0.45, hw * 0.4, hh * 0.22, -0.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  });
 }
 
 function drawTreeCanopy(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, rnd: () => number) {
@@ -218,7 +281,7 @@ function drawChalkSun(ctx: CanvasRenderingContext2D, x: number, y: number, rnd: 
  * Рисует статичный фон двора в мировых координатах (контекст уже с трансформацией камеры).
  * Результат кешируется в offscreen-canvas и перерисовывается только при resize/смене уровня.
  */
-export function drawCourtyard(ctx: CanvasRenderingContext2D, zone: Zone, vis: VisibleRect): void {
+export function drawCourtyard(ctx: CanvasRenderingContext2D, zone: Zone, obstacles: readonly Obstacle[], vis: VisibleRect): void {
   // отдельный поток случайных чисел на каждый слой: размер экрана (количество травинок)
   // не должен менять расположение трещин, деревьев и мела
   const stream = (n: number) => mulberry32(20260930 + n * 7919);
@@ -325,6 +388,7 @@ export function drawCourtyard(ctx: CanvasRenderingContext2D, zone: Zone, vis: Vi
   ctx.restore();
 
   drawZone(ctx, zone, rnd);
+  drawObstacles(ctx, obstacles);
 
   // 4) бордюр
   ctx.fillStyle = '#d3cec4';

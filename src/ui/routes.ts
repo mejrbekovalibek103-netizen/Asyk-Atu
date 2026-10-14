@@ -49,7 +49,7 @@ export function hashToRoute(hash: string): Route {
   if (h === 'about') return { name: 'ABOUT' };
   if (h === 'duel') return { name: 'MATCH_SETUP' };
   if (h === 'duel/play') return { name: 'MATCH' };
-  const room = /^room\/([A-Za-z0-9-]{4,12})$/.exec(h);
+  const room = /^room\/([A-Za-z0-9-]{4,24})$/.exec(h);
   if (room) {
     const code = normalizeRoomCode(room[1]);
     if (code) return { name: 'ROOM', code };

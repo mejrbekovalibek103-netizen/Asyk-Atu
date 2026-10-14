@@ -6,7 +6,7 @@ import { MatchRules } from '../../game/rules/MatchRules';
 import type { MatchConfig, MatchHud, MatchResult, Seat } from '../../game/types';
 import { Icon } from '../components/Icon';
 import { PowerMeter, RotateHint, Toast } from '../game/GameOverlays';
-import { PlayerCard, TurnBanner } from '../game/MatchParts';
+import { HandoffCard, PlayerCard, TurnBanner } from '../game/MatchParts';
 import { useGameEngine, usePauseOnHide } from '../game/useGameEngine';
 import type { Route } from '../routes';
 import { MatchResultOverlay } from './MatchResultOverlay';
@@ -101,7 +101,18 @@ export function MatchScreen(props: Props) {
       </header>
 
       <Toast message={s?.message ?? null} top={view.size.top} />
-      {m && !result && <TurnBanner hud={m} y={view.w2s(0, 720).y} />}
+      {m && !result && !pauseOpen && m.handoff && (
+        <HandoffCard
+          hud={m}
+          y={view.w2s(0, 700).y}
+          onReady={() => {
+            sound.uiClick();
+            engine?.confirmHandoff();
+            canvasRef.current?.focus({ preventScroll: true });
+          }}
+        />
+      )}
+      {m && !result && !m.handoff && <TurnBanner hud={m} y={view.w2s(0, 720).y} />}
       <div className="sr-only" aria-live="polite">
         {m ? `Ход: ${m.players[m.current].name}. Счёт ${m.players[0].knocked}:${m.players[1].knocked}.` : ''}
       </div>

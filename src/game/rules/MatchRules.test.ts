@@ -26,10 +26,10 @@ function fakeHost(left: { n: number }): RulesHost {
 
 const piece = (id: number) => ({ id, kind: 'asyk', body: { position: { x: 400, y: 300 } } }) as unknown as Piece;
 
-function setup(first: 0 | 1 = 0, localSeat: 0 | 1 | null = null) {
+function setup(first: 0 | 1 = 0, localSeat: 0 | 1 | null = null, handoff = false) {
   const left = { n: layout.asyks.length };
   let result: MatchResult | null = null;
-  const rules = new MatchRules({ ...config, first }, (r) => (result = r), localSeat);
+  const rules = new MatchRules({ ...config, first, handoff }, (r) => (result = r), localSeat);
   rules.attach(fakeHost(left));
   /** Один бросок: выбивает указанные id. */
   const play = (...ids: number[]) => {
@@ -81,6 +81,67 @@ describe('MatchRules: очередь ходов', () => {
     play(); // игрок 0 промахнулся
     expect(rules.canThrow()).toBe(true);
     expect(setup(0, null).rules.canThrow()).toBe(true);
+  });
+});
+
+describe('MatchRules: передача устройства (одно устройство)', () => {
+  it('до нажатия «Готов» бросок заблокирован — и в начале матча, и после каждого броска', () => {
+    const { rules, play } = setup(0, null, true);
+    expect(rules.hud().handoff).toBe(true);
+    expect(rules.canThrow()).toBe(false);
+    expect(rules.blockedHint()).toContain('Айдос');
+    rules.confirmHandoff();
+    expect(rules.canThrow()).toBe(true);
+    expect(rules.hud().handoff).toBe(false);
+
+    play(1); // попал — ход всё равно переходит
+    expect(rules.hud().current).toBe(1);
+    expect(rules.canThrow()).toBe(false);
+    expect(rules.blockedHint()).toContain('Дана');
+    rules.confirmHandoff();
+    expect(rules.canThrow()).toBe(true);
+
+    play(); // промах
+    expect(rules.hud().current).toBe(0);
+    expect(rules.canThrow()).toBe(false);
+  });
+
+  it('повторное «Готов» безвредно, а блокировка возвращается на следующем ходу', () => {
+    const { rules, play } = setup(1, null, true);
+    rules.confirmHandoff();
+    rules.confirmHandoff();
+    expect(rules.canThrow()).toBe(true);
+    play();
+    expect(rules.canThrow()).toBe(false);
+  });
+
+  it('выключенная передача не мешает (по умолчанию)', () => {
+    const { rules, play } = setup(0, null, false);
+    expect(rules.canThrow()).toBe(true);
+    play();
+    expect(rules.canThrow()).toBe(true);
+    expect(rules.hud().handoff).toBe(false);
+  });
+
+  it('в онлайне передача не используется, даже если флаг включён', () => {
+    const { rules } = setup(0, 0, true);
+    expect(rules.hud().handoff).toBe(false);
+    expect(rules.canThrow()).toBe(true);
+  });
+
+  it('рестарт матча снова требует «Готов», а в конце матча экран передачи не показывается', () => {
+    const { rules, play, left } = setup(0, null, true);
+    rules.confirmHandoff();
+    play();
+    rules.confirmHandoff();
+    rules.reset();
+    expect(rules.canThrow()).toBe(false);
+    expect(rules.hud().handoff).toBe(true);
+    rules.confirmHandoff();
+    left.n = 1;
+    play(1); // кон опустел — матч закончен
+    expect(rules.hud().finished).toBe(true);
+    expect(rules.hud().handoff).toBe(false);
   });
 });
 

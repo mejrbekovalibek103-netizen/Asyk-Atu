@@ -119,6 +119,18 @@ interface Track {
 /** Сколько шагов записи держать в запасе перед стартом воспроизведения (сглаживает сеть). */
 export const REPLAY_LEAD_STEPS = 24;
 
+/**
+ * Пределы воспроизведения чужого броска. Настоящий бросок их не достигает (≈ 400 кадров, десятки событий,
+ * ≤ 1100 шагов), а подделка упирается в них и не может съесть память или зациклить воспроизведение.
+ */
+export const REPLAY_CAPS = {
+  /** Частей записи, ожидающих предыдущих (пришли не по порядку). */
+  maxPending: 64,
+  maxFrames: 2_500,
+  maxEvents: 3_000,
+  maxSteps: 1_300,
+} as const;
+
 /** Проигрывает чужой бросок на устройстве соперника. */
 export class ThrowPlayer {
   private readonly tracks = new Map<number, Track>();
@@ -126,6 +138,8 @@ export class ThrowPlayer {
   private nextSeq = 0;
   private readonly pending = new Map<number, ThrowChunk>();
   private lastStep = 0;
+  private frameCount = 0;
+  private eventCount = 0;
   private endInfo: ThrowEnd | null = null;
   /** Текущий шаг воспроизведения. */
   cursor = 0;
@@ -135,12 +149,17 @@ export class ThrowPlayer {
 
   /** Части могут прийти не по порядку — применяем строго по seq. */
   push(chunk: ThrowChunk): void {
+    // уже применённая часть, часть «из далёкого будущего» и переполнение очереди — подделка или сбой: игнорируем
+    if (chunk.seq < this.nextSeq || chunk.seq >= this.nextSeq + REPLAY_CAPS.maxPending) return;
+    if (this.pending.size >= REPLAY_CAPS.maxPending) return;
     this.pending.set(chunk.seq, chunk);
     while (this.pending.has(this.nextSeq)) {
       const c = this.pending.get(this.nextSeq)!;
       this.pending.delete(this.nextSeq);
       this.nextSeq += 1;
       for (const f of c.frames) {
+        if (this.frameCount >= REPLAY_CAPS.maxFrames) break;
+        this.frameCount += 1;
         for (let k = 0; k + 3 < f.b.length; k += 4) {
           const idx = f.b[k];
           let t = this.tracks.get(idx);
@@ -152,13 +171,22 @@ export class ThrowPlayer {
         }
         this.lastStep = Math.max(this.lastStep, f.s);
       }
-      this.events.push(...c.events);
-      for (const e of c.events) this.lastStep = Math.max(this.lastStep, e.s);
+      // цикл вместо push(...массив): огромный массив не переполнит стек вызовов
+      let added = false;
+      for (const e of c.events) {
+        if (this.eventCount >= REPLAY_CAPS.maxEvents) break;
+        this.eventCount += 1;
+        this.events.push(e);
+        this.lastStep = Math.max(this.lastStep, e.s);
+        added = true;
+      }
+      // события применяются по номеру шага: порядок должен быть возрастающим, даже если его нарушили
+      if (added) this.events.sort((a, b) => a.s - b.s);
     }
   }
 
   end(info: ThrowEnd): void {
-    this.endInfo = info;
+    this.endInfo = { ...info, steps: Math.min(info.steps, REPLAY_CAPS.maxSteps) };
   }
 
   get ended(): ThrowEnd | null {

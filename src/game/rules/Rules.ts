@@ -56,6 +56,8 @@ export interface Rules {
   sakaPalette(): AsykPalette;
   /** Цвет браслета на руке. */
   braceletColor(): string;
+  /** Одно устройство: игрок нажал «Готов» — бросок снова разрешён. */
+  confirmHandoff?(): void;
   /** Состояние счёта для синхронизации онлайн-матча (после переподключения). */
   exportState?(): unknown;
   importState?(state: unknown): void;
