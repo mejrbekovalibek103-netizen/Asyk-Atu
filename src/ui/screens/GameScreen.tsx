@@ -5,7 +5,8 @@ import { goalText, nextLevelId } from '../../game/levels/levels';
 import { SoloRules } from '../../game/rules/SoloRules';
 import type { LevelConfig, RoundResult } from '../../game/types';
 import type { RecordOutcome } from '../../storage/progress';
-import { clearSoloRound, loadSoloRound, saveSoloRound } from '../../storage/roundSave';
+import { clearSoloRound, loadSoloRound, saveSoloRound, updateSoloElapsed } from '../../storage/roundSave';
+import { clock } from '../format';
 import { AsykIcon } from '../components/AsykIcon';
 import { Icon } from '../components/Icon';
 import { PowerMeter, RotateHint, Toast } from '../game/GameOverlays';
@@ -88,6 +89,15 @@ export function GameScreen(props: Props) {
   const throwsUsed = m?.throwsUsed ?? 0;
   const knocked = m?.knocked ?? 0;
   const score = m?.score ?? 0;
+  const timeLimit = m?.timeLimitMs ?? null;
+  const timeLeft = m?.timeLeftMs ?? null;
+  const timerRunning = m?.timerRunning ?? false;
+  const urgent = timerRunning && timeLeft !== null && timeLeft <= 10_000;
+
+  // испытание со временем: раз в секунду записываем, сколько времени прошло (перезагрузка не вернёт секунды)
+  useEffect(() => {
+    if (timerRunning && timeLimit !== null && timeLeft !== null) updateSoloElapsed(level, timeLimit - timeLeft);
+  }, [level, timerRunning, timeLimit, timeLeft]);
 
   return (
     <div className="game" ref={view.containerRef}>
@@ -109,7 +119,20 @@ export function GameScreen(props: Props) {
             </span>
             <span className="hud__goal">{goalText(level)}</span>
           </div>
-          <div className="hud__stats" aria-live="off">
+          <div className={`hud__stats${timeLimit !== null ? ' hud__stats--timed' : ''}`} aria-live="off">
+            {timeLimit !== null && timeLeft !== null && (
+              <div
+                className={`stat stat--time${urgent ? ' stat--urgent' : ''}${timerRunning ? '' : ' stat--idle'}`}
+                role="timer"
+                aria-label={`Осталось времени: ${clock(timeLeft)}${timerRunning ? '' : '. Время пойдёт, когда возьмёшь сақа'}`}
+              >
+                <span className="stat__label">Время</span>
+                <span className="stat__value">{clock(timeLeft)}</span>
+                <span className="stat__bar" aria-hidden="true">
+                  <i style={{ width: `${Math.max(0, Math.min(100, (timeLeft / timeLimit) * 100))}%` }} />
+                </span>
+              </div>
+            )}
             <div className="stat" aria-label={`Броски: ${throwsUsed} из ${level.throws}`}>
               <span className="stat__label">Броски</span>
               <span className="stat__value">

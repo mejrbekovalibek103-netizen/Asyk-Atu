@@ -4,6 +4,7 @@ import type { RecordOutcome } from '../../storage/progress';
 import { Modal } from '../components/Modal';
 import { Ornament } from '../components/Ornament';
 import { Stars } from '../components/Stars';
+import { clock } from '../format';
 
 interface Props {
   level: LevelConfig;
@@ -18,13 +19,13 @@ interface Props {
 
 /** Подсказка «как улучшить результат» — к чему стремиться дальше. */
 function improveTip(level: LevelConfig, r: RoundResult): string {
-  if (!r.passed) return `Цель: ${goalText(level).toLowerCase()}. ${level.hint}`;
+  if (!r.passed) return `${r.timeUp ? 'Не хватило времени. ' : ''}Цель: ${goalText(level).toLowerCase()}. ${level.hint}`;
   if (r.stars < 3) return `До ${r.stars + 1}★: ${starRuleText(level.stars[r.stars - 1], level).toLowerCase()}.`;
   return 'Три звезды! Попробуй побить свой рекорд очков — комбо и серии дают бонусы.';
 }
 
 export function ResultOverlay({ level, result: r, outcome, nextId, onAgain, onNext, onLevels, onHome }: Props) {
-  const title = r.passed ? 'Испытание пройдено!' : 'Раунд завершён!';
+  const title = r.timeUp ? (r.passed ? 'Время вышло — испытание пройдено!' : 'Время вышло!') : r.passed ? 'Испытание пройдено!' : 'Раунд завершён!';
   return (
     <Modal labelledBy="result-title" className="modal--result">
       <Ornament className="modal__ornament" />
@@ -57,6 +58,14 @@ export function ResultOverlay({ level, result: r, outcome, nextId, onAgain, onNe
             {r.throwsUsed} <small>/ {r.throwsTotal}</small>
           </dd>
         </div>
+        {r.timeLimit !== null && (
+          <div>
+            <dt>Время</dt>
+            <dd>
+              {clock(r.timeUsedMs)} <small>/ {clock(r.timeLimit * 1000)}</small>
+            </dd>
+          </div>
+        )}
         {r.bestCombo >= 2 && (
           <div>
             <dt>Лучшее комбо</dt>

@@ -3,7 +3,7 @@ import { isLevelUnlocked, type SaveData } from '../../storage/progress';
 import { Icon } from '../components/Icon';
 import { LevelPreview } from '../components/LevelPreview';
 import { Stars } from '../components/Stars';
-import { plural } from '../format';
+import { plural, timeLimitText } from '../format';
 import type { Route } from '../routes';
 
 interface Props {
@@ -44,7 +44,7 @@ export function LevelSelectScreen({ save, onNavigate, onBack }: Props) {
                   onClick={() => onNavigate({ name: 'PLAYING', levelId: level.id })}
                   aria-label={
                     unlocked
-                      ? `Испытание ${level.order}: ${level.name}. ${goalText(level)}. ${p ? `Лучший результат ${p.bestScore}, звёзд ${p.stars}` : 'Ещё не сыграно'}`
+                      ? `Испытание ${level.order}: ${level.name}. ${goalText(level)}.${level.timeLimit ? ` Время: ${timeLimitText(level.timeLimit)}.` : ''} ${p ? `Лучший результат ${p.bestScore}, звёзд ${p.stars}` : 'Ещё не сыграно'}`
                       : `Испытание ${level.order}: ${level.name}, закрыто. Пройди «${LEVELS[i - 1].name}»`
                   }
                 >
@@ -64,6 +64,7 @@ export function LevelSelectScreen({ save, onNavigate, onBack }: Props) {
                     <p className="level-card__desc">{level.description}</p>
                     <p className="level-card__goal">
                       🎯 {goalText(level)} · {level.throws} {plural(level.throws, ['бросок', 'броска', 'бросков'])}
+                      {level.timeLimit ? <b className="level-card__time"> · ⏱ {timeLimitText(level.timeLimit)}</b> : null}
                     </p>
                     <div className="level-card__meta">
                       <Stars value={p?.stars ?? 0} size={18} />

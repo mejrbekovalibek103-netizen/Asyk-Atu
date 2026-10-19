@@ -3,7 +3,7 @@ import { getLevel } from '../game/levels/levels';
 import { getMatchLayout } from '../game/levels/matchLayouts';
 import { PhysicsWorld } from '../game/physics/PhysicsWorld';
 import type { AsykSpawn, MatchConfig } from '../game/types';
-import { clearAllRounds, clearDuelRound, clearSoloRound, layoutSignature, loadDuelRound, loadSoloRound, ROUND_TTL_MS, saveDuelRound, saveSoloRound } from './roundSave';
+import { clearAllRounds, clearDuelRound, clearSoloRound, layoutSignature, loadDuelRound, loadSoloRound, ROUND_TTL_MS, saveDuelRound, saveSoloRound, updateSoloElapsed } from './roundSave';
 
 /** Минимальная подмена localStorage для среды без браузера. */
 function fakeStorage() {
@@ -38,7 +38,7 @@ function asyksAfter(spawns: AsykSpawn[], knockedIds: number[]) {
 
 const soloState = () => ({
   asyks: asyksAfter(level.asyks, [0, 1, 2]),
-  rules: { throwsUsed: 2, score: 45, knocked: 3, streak: 2, bestCombo: 2, hitThrows: 2, targetThrow: null },
+  rules: { throwsUsed: 2, score: 45, knocked: 3, streak: 2, bestCombo: 2, hitThrows: 2, targetThrow: null, elapsedMs: 0 },
 });
 
 const config: MatchConfig = { layoutId: layout.id, players: ['Айдос', 'Дана'], first: 0 };
@@ -191,5 +191,48 @@ describe('сохранение матча вдвоём', () => {
     clearAllRounds();
     expect(loadSoloRound(level)).toBeNull();
     expect(loadDuelRound()).toBeNull();
+  });
+});
+
+describe('испытание со временем: прошедшее время сохраняется между бросками', () => {
+  const timed = { ...level, timeLimit: 60 };
+  const stateWith = (elapsedMs: number) => {
+    const st = soloState();
+    return { ...st, rules: { ...st.rules, elapsedMs } };
+  };
+
+  it('время, записанное вместе с раундом, возвращается при загрузке', () => {
+    saveSoloRound(timed, stateWith(20_000));
+    expect(loadSoloRound(timed)?.rules).toMatchObject({ elapsedMs: 20_000 });
+  });
+
+  it('updateSoloElapsed дописывает время в сохранённый раунд, и только вперёд', () => {
+    saveSoloRound(timed, stateWith(20_000));
+    updateSoloElapsed(timed, 31_400);
+    expect(loadSoloRound(timed)?.rules).toMatchObject({ elapsedMs: 31_400 });
+    updateSoloElapsed(timed, 25_000); // запоздалый вызов не откатывает время назад
+    expect(loadSoloRound(timed)?.rules).toMatchObject({ elapsedMs: 31_400 });
+  });
+
+  it('время ограничено лимитом: раунд с исчерпанным временем не «воскресает»', () => {
+    saveSoloRound(timed, stateWith(20_000));
+    updateSoloElapsed(timed, 999_999);
+    expect(loadSoloRound(timed)?.rules).toMatchObject({ elapsedMs: 59_999 });
+  });
+
+  it('без сохранения, для другого испытания и без лимита времени — ничего не делает', () => {
+    updateSoloElapsed(timed, 10_000); // сохранения нет
+    expect(store.raw.has(SOLO_KEY)).toBe(false);
+    saveSoloRound(timed, stateWith(5_000));
+    updateSoloElapsed({ ...getLevel('kon'), timeLimit: 60 }, 40_000); // чужое испытание
+    updateSoloElapsed(level, 40_000); // у этого испытания лимита времени нет
+    expect(loadSoloRound(timed)?.rules).toMatchObject({ elapsedMs: 5_000 });
+  });
+
+  it('подделанное время (больше лимита, дробное) не принимается', () => {
+    for (const bad of [60_000, 1e12, -1, 1.5, '5']) {
+      put(SOLO_KEY, { levelId: timed.id, sig: layoutSignature(timed, timed.throws), state: stateWith(bad as number) });
+      expect(loadSoloRound(timed), String(bad)).toBeNull();
+    }
   });
 });

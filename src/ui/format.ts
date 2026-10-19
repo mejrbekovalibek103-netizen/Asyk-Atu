@@ -8,6 +8,20 @@ export function plural(n: number, forms: [string, string, string]): string {
   return forms[2];
 }
 
+/** Оставшееся время для таймера: 83000 → «1:23». Секунды округляются вверх, поэтому «0:00» — только когда время вышло. */
+export function clock(ms: number): string {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+/** Лимит времени словами: 60 → «1 мин», 90 → «1 мин 30 с», 45 → «45 с». */
+export function timeLimitText(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  if (m === 0) return `${s} с`;
+  return s === 0 ? `${m} мин` : `${m} мин ${s} с`;
+}
+
 export const NAME_MAX = 16;
 
 /** Сколько символов вообще рассматриваем: огромные строки отбрасываем до дорогой обработки. */

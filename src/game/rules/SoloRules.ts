@@ -21,6 +21,17 @@ export class SoloRules implements Rules {
   private cleared = false;
   /** Раунд восстановлен из сохранения (после перезагрузки страницы): при старте сообщаем об этом игроку. */
   private resumed = false;
+  // ——— время (испытания с timeLimit) ———
+  private elapsedMs = 0;
+  /** Таймер идёт: игрок взял сақа, время не вышло, раунд не окончен. */
+  private timerOn = false;
+  private timeUp = false;
+  /** Последняя показанная секунда — чтобы обновлять интерфейс раз в секунду, а не каждый кадр. */
+  private shownSecond = -1;
+
+  private get limitMs(): number {
+    return this.level.timeLimit ? this.level.timeLimit * 1000 : 0;
+  }
 
   constructor(
     private readonly level: LevelConfig,
@@ -41,6 +52,35 @@ export class SoloRules implements Rules {
 
   canThrow(): boolean {
     return true;
+  }
+
+  /** Первое касание руки запускает таймер: пока игрок разглядывает кон, время стоит. */
+  onAim(): void {
+    if (this.limitMs > 0 && !this.timeUp && !this.practice) this.timerOn = true;
+  }
+
+  tick(dtMs: number): boolean {
+    if (!this.timerOn || this.timeUp) return false;
+    this.elapsedMs = Math.min(this.limitMs, this.elapsedMs + dtMs);
+    let changed = false;
+    const left = Math.ceil((this.limitMs - this.elapsedMs) / 1000);
+    if (left !== this.shownSecond) {
+      this.shownSecond = left;
+      changed = true;
+      if (left > 0 && left <= 5) sound.timeTick();
+    }
+    if (this.elapsedMs >= this.limitMs) {
+      this.timeUp = true;
+      this.timerOn = false;
+      this.host.say('Время вышло!', 'warn', 2400);
+      sound.timeUp();
+      changed = true;
+    }
+    return changed;
+  }
+
+  timeIsUp(): boolean {
+    return this.timeUp;
   }
 
   blockedHint(): string {
@@ -105,11 +145,14 @@ export class SoloRules implements Rules {
       return { kind: 'reset', message: `Отлично! Теперь по-настоящему: ${n} ${plural(n, ['бросок', 'броска', 'бросков'])}` };
     }
     this.cleared = this.host.asyksLeft() === 0;
-    if (this.cleared || this.level.throws - this.throwsUsed <= 0) return { kind: 'finish' };
+    // время вышло, пока сақа летел: бросок засчитан, дальше раунд окончен
+    if (this.cleared || this.timeUp || this.level.throws - this.throwsUsed <= 0) return { kind: 'finish' };
     return { kind: 'continue' };
   }
 
   onFinish(): void {
+    this.timerOn = false;
+    this.cleared = this.host.asyksLeft() === 0;
     const remaining = this.level.throws - this.throwsUsed;
     const cleared = this.cleared;
     const clean = this.scorer.finishRound(remaining, cleared);
@@ -136,6 +179,9 @@ export class SoloRules implements Rules {
       hitThrows: s.hitThrows,
       passed: isGoalMet(this.level, input),
       stars: computeStars(this.level, input),
+      timeUp: this.timeUp,
+      timeLimit: this.level.timeLimit ?? null,
+      timeUsedMs: Math.round(this.elapsedMs),
     };
     sound.roundEnd(result.passed);
     this.host.schedule(clean > 0 ? 1300 : 700, () => this.onComplete(result));
@@ -148,11 +194,20 @@ export class SoloRules implements Rules {
     this.lastThrow = null;
     this.cleared = false;
     this.resumed = false;
+    this.elapsedMs = 0;
+    this.timerOn = false;
+    this.timeUp = false;
+    this.shownSecond = -1;
   }
 
   /** Счёт между бросками — для сохранения раунда (перезагрузка страницы не должна его обнулять). */
   exportState(): SoloState {
-    return { throwsUsed: this.throwsUsed, ...this.scorer.exportState() };
+    return { throwsUsed: this.throwsUsed, ...this.scorer.exportState(), elapsedMs: this.savedElapsedMs() };
+  }
+
+  /** Сколько времени раунда прошло — для сохранения (меньше лимита: раунд с исчерпанным временем не сохраняется). */
+  savedElapsedMs(): number {
+    return this.limitMs > 0 ? Math.min(Math.round(this.elapsedMs), this.limitMs - 1) : 0;
   }
 
   /** Принимает только проверенное состояние: сохранение лежит в localStorage, и править его может кто угодно. */
@@ -161,6 +216,7 @@ export class SoloRules implements Rules {
     if (!st) return;
     this.scorer.importState(st);
     this.throwsUsed = st.throwsUsed;
+    this.elapsedMs = st.elapsedMs;
     this.practice = false;
     this.resumed = true;
   }
@@ -184,6 +240,9 @@ export class SoloRules implements Rules {
       streak: s.streak,
       practice: this.practice,
       lastThrow: this.lastThrow,
+      timeLimitMs: this.limitMs > 0 ? this.limitMs : null,
+      timeLeftMs: this.limitMs > 0 ? Math.max(0, this.limitMs - this.elapsedMs) : null,
+      timerRunning: this.timerOn,
     };
   }
 

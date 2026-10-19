@@ -790,6 +790,10 @@ button {
   font-weight: 700;
   color: var(--ink);
 }
+.level-card__time {
+  color: #b0261f; /* испытание со временем */
+  white-space: nowrap;
+}
 .level-card__meta {
   margin-top: auto;
   display: flex;
@@ -1073,6 +1077,51 @@ button {
 .stat__target {
   display: inline-flex;
   color: #7fd9ee;
+}
+
+/* испытание со временем: четвёртая карточка «Время» с полосой остатка */
+.hud__stats--timed {
+  grid-template-columns: 1fr 1fr 0.9fr 1fr;
+}
+.stat--time {
+  align-items: stretch;
+}
+.stat--time .stat__value {
+  font-variant-numeric: tabular-nums;
+}
+.stat--time.stat--idle .stat__value {
+  opacity: 0.7; /* таймер ещё не запущен: время пойдёт, когда игрок возьмёт сақа */
+}
+.stat__bar {
+  display: block;
+  height: 3px;
+  margin-top: 2px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.25);
+  overflow: hidden;
+}
+.stat__bar > i {
+  display: block;
+  height: 100%;
+  background: var(--sun);
+  transition: width 1s linear;
+}
+.stat--urgent {
+  background: rgba(176, 38, 31, 0.94);
+  animation: urgent 1s ease-in-out infinite;
+}
+.stat--urgent .stat__bar > i {
+  background: #fff;
+}
+@keyframes urgent {
+  50% {
+    box-shadow: 0 0 0 3px rgba(255, 110, 100, 0.6);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stat--urgent {
+    animation: none;
+  }
 }
 .bump {
   display: inline-block;

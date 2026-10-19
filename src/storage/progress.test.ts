@@ -17,6 +17,9 @@ const result = (over: Partial<RoundResult> = {}): RoundResult => ({
   hitThrows: 4,
   passed: true,
   stars: 2,
+  timeUp: false,
+  timeLimit: null,
+  timeUsedMs: 0,
   ...over,
 });
 

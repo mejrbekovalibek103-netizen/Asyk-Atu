@@ -16,8 +16,9 @@ import type { HudMessage, HudSnapshot, KonLayout, Phase, TutorialStep, Vec2 } fr
  * это защищает от двойного броска, повторного подсчёта и «гонок» таймеров.
  */
 const TRANSITIONS: Record<Phase, readonly Phase[]> = {
-  // READY → THROWING — только для воспроизведения броска соперника в онлайн-матче
-  READY: ['AIMING', 'THROWING'],
+  // READY → THROWING — только для воспроизведения броска соперника в онлайн-матче;
+  // READY → ROUND_COMPLETE — вышло время испытания, пока сақа в руке
+  READY: ['AIMING', 'THROWING', 'ROUND_COMPLETE'],
   AIMING: ['READY', 'THROWING'],
   THROWING: ['RESOLVING'],
   RESOLVING: ['READY', 'ROUND_COMPLETE'],
@@ -303,6 +304,7 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
       return false;
     }
     if (!this.setPhase('AIMING')) return false;
+    this.rules.onAim?.();
     this.aimSource = 'pointer';
     this.localAim = aimFromPoint(THROW_ORIGIN, p, this.lastAngle);
     if (this.tutorialStep === 'grab') this.tutorialStep = 'drag';
@@ -339,6 +341,7 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
     if (this.phase === 'READY') {
       if (!this.rules.canThrow()) return;
       if (!this.setPhase('AIMING')) return;
+      this.rules.onAim?.();
       this.aimSource = 'keyboard';
       this.localAim = aimFromAnglePower(this.lastAngle, this.lastPower);
       if (this.tutorialStep === 'grab') this.tutorialStep = 'drag';
@@ -390,6 +393,9 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
       }
       if (steps >= 24) this.accumulator = 0;
       this.runTasks();
+      // таймер испытания со временем: интерфейс обновляется раз в секунду; вышло время при сақа в руке — раунд окончен
+      if (this.phase !== 'ROUND_COMPLETE' && this.rules.tick?.(dt)) this.emit();
+      if ((this.phase === 'READY' || this.phase === 'AIMING') && this.rules.timeIsUp?.()) this.finishByTime();
       if (this.aimDirty && this.phase === 'AIMING') this.sendAim(false);
       this.effects.update(dt);
       this.animateHand(dt);
@@ -641,6 +647,19 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
     this.rules.onSettled(this.currentThrow);
     this.emit();
     this.schedule(RESOLVE_PAUSE_MS, () => this.afterResolve());
+  }
+
+  /**
+   * Время вышло, пока сақа в руке (или игрок целится): раунд заканчивается сразу.
+   * Если сақа уже летит, бросок доигрывается, а раунд заканчивается в `afterResolve` (правила отвечают `finish`).
+   */
+  private finishByTime(): void {
+    if (this.phase === 'AIMING') this.cancelAim(false);
+    this.localAim = null;
+    this.release = null;
+    if (!this.setPhase('ROUND_COMPLETE')) return;
+    this.rules.onFinish();
+    this.emit();
   }
 
   private afterResolve(): void {

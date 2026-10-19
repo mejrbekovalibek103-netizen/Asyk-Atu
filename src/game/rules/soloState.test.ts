@@ -103,13 +103,13 @@ describe('SoloRules: сохранение и продолжение раунда
 
   it('подделанное состояние не принимается: раунд остаётся чистым', () => {
     const b = make();
-    b.rules.importState({ throwsUsed: 2, score: 1e9, knocked: 3, streak: 1, bestCombo: 2, hitThrows: 2, targetThrow: null });
+    b.rules.importState({ throwsUsed: 2, score: 1e9, knocked: 3, streak: 1, bestCombo: 2, hitThrows: 2, targetThrow: null, elapsedMs: 0 });
     expect(b.rules.hud()).toMatchObject({ throwsUsed: 0, knocked: 0, score: 0 });
   });
 });
 
 describe('parseSoloState: проверка сохранённого счёта', () => {
-  const good = { throwsUsed: 2, score: 45, knocked: 3, streak: 2, bestCombo: 2, hitThrows: 2, targetThrow: null };
+  const good = { throwsUsed: 2, score: 45, knocked: 3, streak: 2, bestCombo: 2, hitThrows: 2, targetThrow: null, elapsedMs: 0 };
 
   it('честное состояние читается без потерь, лишние поля отбрасываются', () => {
     expect(parseSoloState(good, level)).toEqual(good);
@@ -141,11 +141,117 @@ describe('parseSoloState: проверка сохранённого счёта',
     expect(parseSoloState({ ...good, knocked: 0, score: 0, hitThrows: 1, streak: 1, bestCombo: 0 }, level)).toBeNull(); // «результативный» без асыков
   });
 
+  it('время: у испытания без лимита его нет, у испытания со временем — от нуля до лимита', () => {
+    const timed = { ...level, timeLimit: 60 };
+    expect(parseSoloState({ ...good, elapsedMs: 0 }, level)).toEqual(good);
+    expect(parseSoloState({ ...good, elapsedMs: 5000 }, level)).toBeNull(); // на уровне без лимита времени быть не может
+    expect(parseSoloState({ ...good, elapsedMs: 25_000 }, timed)).toEqual({ ...good, elapsedMs: 25_000 });
+    expect(parseSoloState({ ...good, elapsedMs: 59_999 }, timed)?.elapsedMs).toBe(59_999);
+    expect(parseSoloState({ ...good, elapsedMs: 60_000 }, timed)).toBeNull(); // время вышло — раунд не продолжают
+    expect(parseSoloState({ ...good, elapsedMs: -1 }, timed)).toBeNull();
+    expect(parseSoloState({ ...good, elapsedMs: 1.5 }, timed)).toBeNull();
+    const { elapsedMs: _drop, ...old } = good; // сохранение старой версии (без поля) читается как «время не шло»
+    expect(parseSoloState(old, timed)?.elapsedMs).toBe(0);
+  });
+
   it('синий асык: номер броска допустим только на уровне с синим асыком и не позже сделанных бросков', () => {
-    const withTarget = { throwsUsed: 2, score: 70, knocked: 1, streak: 1, bestCombo: 1, hitThrows: 1, targetThrow: 2 };
+    const withTarget = { throwsUsed: 2, score: 70, knocked: 1, streak: 1, bestCombo: 1, hitThrows: 1, targetThrow: 2, elapsedMs: 0 };
     expect(parseSoloState(withTarget, mergen)).toEqual(withTarget);
     expect(parseSoloState(withTarget, level)).toBeNull(); // на «Горке» синего асыка нет
     expect(parseSoloState({ ...withTarget, targetThrow: 3 }, mergen)).toBeNull(); // бросок №3 ещё не сделан
     expect(parseSoloState({ ...withTarget, targetThrow: 0 }, mergen)).toBeNull();
+  });
+});
+
+
+describe('SoloRules: время испытания', () => {
+  const timedLevel = { ...level, timeLimit: 60 };
+  function makeTimed() {
+    const left = { n: timedLevel.asyks.length };
+    const said: string[] = [];
+    let result: RoundResult | null = null;
+    const rules = new SoloRules(timedLevel, false, (r) => (result = r));
+    rules.attach(fakeHost(timedLevel, left, said));
+    return { rules, left, said, result: () => result };
+  }
+  const hudOf = (r: SoloRules) => r.hud() as { timeLimitMs: number | null; timeLeftMs: number | null; timerRunning: boolean };
+
+  it('до первого касания руки время стоит, после — идёт', () => {
+    const { rules } = makeTimed();
+    expect(hudOf(rules)).toMatchObject({ timeLimitMs: 60_000, timeLeftMs: 60_000, timerRunning: false });
+    expect(rules.tick(1000)).toBe(false); // таймер не запущен
+    expect(hudOf(rules).timeLeftMs).toBe(60_000);
+    rules.onAim();
+    rules.tick(2500);
+    expect(hudOf(rules)).toMatchObject({ timeLeftMs: 57_500, timerRunning: true });
+  });
+
+  it('tick сообщает об изменении раз в секунду, а не каждый кадр', () => {
+    const { rules } = makeTimed();
+    rules.onAim();
+    expect(rules.tick(16)).toBe(true); // первая секунда показана
+    expect(rules.tick(16)).toBe(false);
+    expect(rules.tick(900)).toBe(false);
+    expect(rules.tick(100)).toBe(true); // перешагнули секунду
+  });
+
+  it('время вышло: раунд закончится после броска, результат помечен, итог засчитывает выбитое', () => {
+    const { rules, left, said, result } = makeTimed();
+    play(rules, left, 0, 1); // 2 асыка выбито
+    rules.onAim();
+    rules.tick(59_900);
+    expect(rules.timeIsUp()).toBe(false);
+    rules.tick(200);
+    expect(rules.timeIsUp()).toBe(true);
+    expect(said.at(-1)).toBe('Время вышло!');
+    expect(hudOf(rules)).toMatchObject({ timeLeftMs: 0, timerRunning: false });
+    expect(rules.next().kind).toBe('finish'); // бросков ещё много, но время вышло
+    rules.onFinish();
+    expect(result()).toMatchObject({ timeUp: true, timeLimit: 60, timeUsedMs: 60_000, knocked: 2, throwsUsed: 1 });
+  });
+
+  it('кон очищен раньше времени — раунд без отметки «время вышло»', () => {
+    const { rules, left, result } = makeTimed();
+    rules.onAim();
+    rules.tick(12_000);
+    play(rules, left, ...timedLevel.asyks.map((_, i) => i));
+    expect(rules.next().kind).toBe('finish');
+    rules.onFinish();
+    expect(result()).toMatchObject({ timeUp: false, cleared: true, timeUsedMs: 12_000, timeLimit: 60 });
+    rules.tick(5000); // после конца раунда время не идёт
+    expect(hudOf(rules).timerRunning).toBe(false);
+  });
+
+  it('время сохраняется и возвращается; перезагрузка не даёт лишних секунд', () => {
+    const a = makeTimed();
+    play(a.rules, a.left, 0);
+    a.rules.onAim();
+    a.rules.tick(20_000);
+    const saved = JSON.parse(JSON.stringify(a.rules.exportState()));
+    expect(saved.elapsedMs).toBe(20_000);
+    const b = makeTimed();
+    b.rules.importState(saved);
+    expect(hudOf(b.rules)).toMatchObject({ timeLeftMs: 40_000, timerRunning: false }); // запустится при следующем касании руки
+    b.rules.onAim();
+    b.rules.tick(1000);
+    expect(hudOf(b.rules).timeLeftMs).toBe(39_000);
+  });
+
+  it('сохраняемое время всегда меньше лимита, а рестарт обнуляет таймер', () => {
+    const { rules } = makeTimed();
+    rules.onAim();
+    rules.tick(70_000);
+    expect(rules.savedElapsedMs()).toBe(59_999);
+    rules.reset();
+    expect(hudOf(rules)).toMatchObject({ timeLeftMs: 60_000, timerRunning: false });
+    expect(rules.timeIsUp()).toBe(false);
+  });
+
+  it('у испытания без лимита таймера нет', () => {
+    const { rules } = make();
+    rules.onAim();
+    expect(rules.tick(5000)).toBe(false);
+    expect(rules.hud()).toMatchObject({ timeLimitMs: null, timeLeftMs: null, timerRunning: false });
+    expect(rules.timeIsUp()).toBe(false);
   });
 });

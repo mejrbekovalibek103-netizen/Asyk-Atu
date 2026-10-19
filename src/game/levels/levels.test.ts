@@ -61,8 +61,26 @@ describe('конфигурация испытаний', () => {
     LEVELS.forEach((l, i) => expect(l.order).toBe(i + 1));
   });
 
-  it('в игре 10 испытаний', () => {
-    expect(LEVELS).toHaveLength(10);
+  it('в игре 20 испытаний: 1–10 без времени, 11–20 со временем', () => {
+    expect(LEVELS).toHaveLength(20);
+    for (const l of LEVELS) expect(l.timeLimit !== undefined, `${l.order}. ${l.name}`).toBe(l.order > 10);
+  });
+
+  it('лимиты времени разумны: кратны 5 с и 8–16 секунд на бросок', () => {
+    for (const l of LEVELS.filter((x) => x.timeLimit !== undefined)) {
+      const t = l.timeLimit!;
+      expect(Number.isInteger(t) && t % 5 === 0, `${l.name}: ${t} с`).toBe(true);
+      const perThrow = t / l.throws;
+      // сам бросок вместе с паузой занимает около 2 с, остальное — прицеливание и размышление
+      expect(perThrow, `${l.name}: ${perThrow.toFixed(1)} с на бросок`).toBeGreaterThanOrEqual(8);
+      expect(perThrow, `${l.name}: ${perThrow.toFixed(1)} с на бросок`).toBeLessThanOrEqual(16);
+    }
+  });
+
+  it('описания не содержат цифр времени (оно показывается отдельно и могло бы разойтись с лимитом)', () => {
+    for (const l of LEVELS.filter((x) => x.timeLimit !== undefined)) {
+      expect(l.description, l.name).not.toMatch(/\d+\s*(с|сек|мин)/i);
+    }
   });
 
   for (const level of LEVELS) {

@@ -15,6 +15,8 @@ export interface SoloState {
   hitThrows: number;
   /** Номером какого броска выбит синий асык (null — ещё нет). */
   targetThrow: number | null;
+  /** Сколько времени раунда уже прошло, мс (только у испытаний со временем): перезагрузка не возвращает время. */
+  elapsedMs: number;
 }
 
 const isInt = (v: unknown, lo: number, hi: number): v is number => typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi;
@@ -50,5 +52,10 @@ export function parseSoloState(raw: unknown, level: LevelConfig): SoloState | nu
   const max = perAsyk * r.knocked + POINTS.comboPerExtra * r.knocked + POINTS.streakMax * r.hitThrows;
   if (!isInt(r.score, min, max)) return null;
 
-  return { throwsUsed: r.throwsUsed, score: r.score, knocked: r.knocked, streak: r.streak, bestCombo: r.bestCombo, hitThrows: r.hitThrows, targetThrow };
+  // время: у испытаний без лимита его нет; с лимитом — от нуля до лимита (до исчерпания раунд не сохраняется)
+  const limitMs = level.timeLimit ? level.timeLimit * 1000 : 0;
+  const elapsed = r.elapsedMs === undefined ? 0 : r.elapsedMs;
+  if (!isInt(elapsed, 0, Math.max(0, limitMs - 1))) return null;
+
+  return { throwsUsed: r.throwsUsed, score: r.score, knocked: r.knocked, streak: r.streak, bestCombo: r.bestCombo, hitThrows: r.hitThrows, targetThrow, elapsedMs: elapsed };
 }

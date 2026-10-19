@@ -97,6 +97,24 @@ export function loadSoloRound(level: LevelConfig, now = Date.now()): MatchSyncSt
   return asyks ? { asyks, rules } : null;
 }
 
+/**
+ * Испытание со временем: между бросками записываем, сколько времени уже прошло, иначе перезагрузка страницы
+ * «возвращала» бы секунды, потраченные на прицеливание после последнего броска. Меняет только сохранённый
+ * раунд этого же испытания; если сохранения ещё нет (первый бросок не сделан), ничего не делает.
+ */
+export function updateSoloElapsed(level: LevelConfig, elapsedMs: number, now = Date.now()): void {
+  if (!level.timeLimit) return;
+  const r = readRaw(SOLO_KEY, now);
+  if (!r || r.levelId !== level.id || r.sig !== layoutSignature(level, level.throws)) return;
+  const st = r.state as Stored | null;
+  const rules = st && typeof st === 'object' ? (st.rules as Stored | null) : null;
+  if (!st || !rules || typeof rules !== 'object') return;
+  const clamped = Math.max(0, Math.min(Math.round(elapsedMs), level.timeLimit * 1000 - 1));
+  // время только растёт (не откатываем при запоздалом вызове)
+  if (typeof rules.elapsedMs === 'number' && rules.elapsedMs >= clamped) return;
+  write(SOLO_KEY, { levelId: r.levelId, sig: r.sig, state: { ...st, rules: { ...rules, elapsedMs: clamped } } });
+}
+
 export function clearSoloRound(): void {
   remove(SOLO_KEY);
 }

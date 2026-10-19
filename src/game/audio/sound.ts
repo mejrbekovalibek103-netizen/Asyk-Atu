@@ -158,6 +158,22 @@ class SoundEngine {
     this.tone(ctx, ctx.currentTime, 900, 0.05, 0.08, 'triangle', 700);
   }
 
+  /** Тик в последние секунды испытания со временем. */
+  timeTick(): void {
+    const ctx = this.ready();
+    if (!ctx) return;
+    this.tone(ctx, ctx.currentTime, 1040, 0.06, 0.07, 'square');
+  }
+
+  /** Время вышло: два нисходящих сигнала. */
+  timeUp(): void {
+    const ctx = this.ready();
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    this.tone(ctx, t, 520, 0.18, 0.12, 'triangle', 440);
+    this.tone(ctx, t + 0.2, 390, 0.3, 0.12, 'triangle', 300);
+  }
+
   /**
    * Щипок струны (алгоритм Карплуса–Стронга) — отсылка к домбре.
    * Используется для завершения раунда и нового рекорда.

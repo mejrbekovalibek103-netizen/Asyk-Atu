@@ -65,6 +65,11 @@ export interface LevelConfig extends KonLayout {
   /** Подсказка, показываемая перед раундом. */
   hint: string;
   throws: number;
+  /**
+   * Ограничение времени, секунд (у испытаний со временем). Отсчёт идёт с первого касания руки и стоит на паузе.
+   * Когда время вышло, раунд заканчивается (бросок в полёте доигрывается), засчитывается выбитое.
+   */
+  timeLimit?: number;
   goal: LevelGoal;
   stars: [StarRule, StarRule];
 }
@@ -109,6 +114,11 @@ export interface SoloHud {
   streak: number;
   practice: boolean;
   lastThrow: ThrowSummary | null;
+  /** Испытание со временем: лимит и сколько осталось, мс (null — времени нет). */
+  timeLimitMs: number | null;
+  timeLeftMs: number | null;
+  /** Таймер уже запущен (игрок взял сақа): до этого время стоит. */
+  timerRunning: boolean;
 }
 
 export type Seat = 0 | 1;
@@ -170,6 +180,11 @@ export interface RoundResult {
   hitThrows: number;
   passed: boolean;
   stars: number;
+  /** Раунд закончился, потому что вышло время (испытания со временем). */
+  timeUp: boolean;
+  /** Лимит времени испытания, секунд (null — без времени) и сколько ушло, мс. */
+  timeLimit: number | null;
+  timeUsedMs: number;
 }
 
 export interface MatchConfig {

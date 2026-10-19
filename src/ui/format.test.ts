@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cleanName, NAME_MAX, plural } from './format';
+import { clock, cleanName, NAME_MAX, plural, timeLimitText } from './format';
 
 describe('cleanName: имя из недоверенного источника', () => {
   it('обычные имена остаются как есть, пробелы схлопываются', () => {
@@ -57,5 +57,26 @@ describe('plural', () => {
     expect(plural(3, ['асык', 'асыка', 'асыков'])).toBe('асыка');
     expect(plural(11, ['асык', 'асыка', 'асыков'])).toBe('асыков');
     expect(plural(21, ['асык', 'асыка', 'асыков'])).toBe('асык');
+  });
+});
+
+describe('время испытания', () => {
+  it('clock: m:ss, секунды округляются вверх, «0:00» — только когда время вышло', () => {
+    expect(clock(60_000)).toBe('1:00');
+    expect(clock(83_000)).toBe('1:23');
+    expect(clock(59_001)).toBe('1:00');
+    expect(clock(9_100)).toBe('0:10');
+    expect(clock(1)).toBe('0:01');
+    expect(clock(0)).toBe('0:00');
+    expect(clock(-500)).toBe('0:00');
+    expect(clock(600_000)).toBe('10:00');
+  });
+
+  it('timeLimitText: словами', () => {
+    expect(timeLimitText(35)).toBe('35 с');
+    expect(timeLimitText(60)).toBe('1 мин');
+    expect(timeLimitText(90)).toBe('1 мин 30 с');
+    expect(timeLimitText(75)).toBe('1 мин 15 с');
+    expect(timeLimitText(120)).toBe('2 мин');
   });
 });

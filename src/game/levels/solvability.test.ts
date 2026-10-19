@@ -5,6 +5,7 @@ import { simulateThrow } from '../physics/simulate';
 import type { KonLayout, LevelConfig } from '../types';
 import { LEVELS } from './levels';
 import { MATCH_LAYOUTS } from './matchLayouts';
+import { minThrowsToClear, SOLVER_COARSE, SOLVER_FINE, solveClear } from './solver';
 
 /**
  * Проходимость: «жадный бот» перебирает сетку (угол × сила) и на каждом броске берёт лучший.
@@ -56,13 +57,32 @@ function play(layout: KonLayout, maxThrows: number, stop: (knocked: number, targ
   return null;
 }
 
-describe('проходимость испытаний', () => {
+describe('проходимость испытаний (решатель находит решение с запасом)', () => {
+  // Звёзды на всех испытаниях требуют «очистить кон» или выбить синий асык первым броском, поэтому решатель
+  // (solver.ts: поиск по лучам, идеальный игрок без разброса руки) обязан это находить. Запас хотя бы в один бросок:
+  // на настоящем игроке сказывается разброс руки, а на уровнях без камней идеальному игроку тоже нужно на 1–2 броска меньше лимита.
   for (const level of LEVELS) {
-    it(`${level.order}. ${level.name}: цель достижима за ${level.throws} бросков`, () => {
-      const goal = level.goal;
-      const res = play(level, level.throws, (knocked, target) => (goal.type === 'knockout' ? knocked >= goal.count : target));
-      expect(res, `бот не выполнил цель уровня «${level.name}»`).not.toBeNull();
-    }, 60_000);
+    if (level.goal.type === 'knockout') {
+      it(`${level.order}. ${level.name}: кон очищается не больше чем за ${level.throws - 1} из ${level.throws} бросков`, () => {
+        const { fine, coarse } = minThrowsToClear(level, level.throws - 1);
+        const best = Math.min(fine ?? Infinity, coarse ?? Infinity);
+        expect(best, `на уровне «${level.name}» не удаётся очистить кон с запасом в бросок: тонкая сетка ${fine}, грубая ${coarse}`).toBeLessThanOrEqual(level.throws - 1);
+      }, 120_000);
+    } else {
+      it(`${level.order}. ${level.name}: синий асык выбивается первым броском`, () => {
+        const one = solveClear(level, { ...SOLVER_FINE, maxThrows: 1, goal: 'target' }) ?? solveClear(level, { ...SOLVER_COARSE, maxThrows: 1, goal: 'target' });
+        expect(one, `на уровне «${level.name}» синий асык не выбить первым броском (3★ недостижима)`).not.toBeNull();
+      }, 120_000);
+
+      // уровни с камнями: все асыки должны быть достижимы, даже если звёзды зависят только от синего асыка
+      if ((level.obstacles?.length ?? 0) > 0) {
+        it(`${level.order}. ${level.name}: весь кон очищается не больше чем за ${level.throws - 1} из ${level.throws} бросков`, () => {
+          const { fine, coarse } = minThrowsToClear(level, level.throws - 1);
+          const best = Math.min(fine ?? Infinity, coarse ?? Infinity);
+          expect(best, `тонкая сетка ${fine}, грубая ${coarse}`).toBeLessThanOrEqual(level.throws - 1);
+        }, 120_000);
+      }
+    }
   }
 });
 
