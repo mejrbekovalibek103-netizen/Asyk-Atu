@@ -74,7 +74,7 @@ export function parseAsykState(raw: unknown): AsykState | null {
   return [index, px, py, pa, inZone];
 }
 
-function parseAsykStates(raw: unknown): AsykState[] | null {
+export function parseAsykStates(raw: unknown): AsykState[] | null {
   if (!Array.isArray(raw) || raw.length > LIMITS.maxAsyks) return null;
   const out: AsykState[] = [];
   const seen = new Set<number>();

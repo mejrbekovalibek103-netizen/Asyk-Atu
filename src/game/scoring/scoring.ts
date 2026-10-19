@@ -107,6 +107,30 @@ export class ScoreKeeper {
   isKnocked(pieceId: number): boolean {
     return this.knockedIds.has(pieceId);
   }
+
+  /** Счёт между бросками (для сохранения раунда). Внутренние множества не нужны: выбитые асыки из кона уже убраны. */
+  exportState(): ScoreState {
+    return { score: this.score, knocked: this.knocked, streak: this.streak, bestCombo: this.bestCombo, hitThrows: this.hitThrows, targetThrow: this.targetThrow };
+  }
+
+  /** Восстановить счёт (данные уже проверены `parseSoloState`). */
+  importState(s: ScoreState): void {
+    this.score = s.score;
+    this.knocked = s.knocked;
+    this.streak = s.streak;
+    this.bestCombo = s.bestCombo;
+    this.hitThrows = s.hitThrows;
+    this.targetThrow = s.targetThrow;
+  }
+}
+
+export interface ScoreState {
+  score: number;
+  knocked: number;
+  streak: number;
+  bestCombo: number;
+  hitThrows: number;
+  targetThrow: number | null;
 }
 
 export interface StarInput {

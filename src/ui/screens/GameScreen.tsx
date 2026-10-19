@@ -5,6 +5,7 @@ import { goalText, nextLevelId } from '../../game/levels/levels';
 import { SoloRules } from '../../game/rules/SoloRules';
 import type { LevelConfig, RoundResult } from '../../game/types';
 import type { RecordOutcome } from '../../storage/progress';
+import { clearSoloRound, loadSoloRound, saveSoloRound } from '../../storage/roundSave';
 import { AsykIcon } from '../components/AsykIcon';
 import { Icon } from '../components/Icon';
 import { PowerMeter, RotateHint, Toast } from '../game/GameOverlays';
@@ -39,16 +40,20 @@ export function GameScreen(props: Props) {
         {
           layout: level,
           rules: new SoloRules(level, props.tutorial, (r) => {
+            clearSoloRound(); // раунд окончен — продолжать нечего
             const outcome = props.onRoundComplete(r);
             setResult({ result: r, outcome });
             if (outcome.isNewRecord) window.setTimeout(() => sound.record(), 700);
           }),
           tutorial: props.tutorial,
           reducedMotion: props.reducedMotion,
+          // перезагрузка страницы не должна обнулять раунд; во время обучения (пробный бросок) раунд не продолжаем
+          restore: props.tutorial ? undefined : (loadSoloRound(level) ?? undefined),
         },
         {
           onTutorialDone: () => props.onTutorialDone(),
           onPauseRequest: () => setPauseOpen((p) => !p),
+          onCheckpoint: (state) => saveSoloRound(level, state),
         },
       ),
     level,
@@ -64,6 +69,7 @@ export function GameScreen(props: Props) {
 
   const restart = useCallback(() => {
     sound.uiClick();
+    clearSoloRound();
     setResult(null);
     setPauseOpen(false);
     engine?.restart();

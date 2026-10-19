@@ -6,6 +6,7 @@ import type { LevelConfig, RoundResult, SoloHud, ThrowSummary } from '../types';
 import { plural } from '../../ui/format';
 import { zoneEdgePoint } from '../levels/zone';
 import type { NextStep, Rules, RulesHost } from './Rules';
+import { parseSoloState, type SoloState } from './soloState';
 
 /**
  * Одиночное испытание: ограниченное число бросков, очки, комбо, серии, звёзды.
@@ -18,6 +19,8 @@ export class SoloRules implements Rules {
   private knockedThisThrow = 0;
   private lastThrow: ThrowSummary | null = null;
   private cleared = false;
+  /** Раунд восстановлен из сохранения (после перезагрузки страницы): при старте сообщаем об этом игроку. */
+  private resumed = false;
 
   constructor(
     private readonly level: LevelConfig,
@@ -29,7 +32,12 @@ export class SoloRules implements Rules {
     this.host = host;
   }
 
-  onStart(): void {}
+  onStart(): void {
+    if (!this.resumed) return;
+    this.resumed = false;
+    const left = this.level.throws - this.throwsUsed;
+    this.host.say(`Раунд продолжен · осталось ${left} ${plural(left, ['бросок', 'броска', 'бросков'])}`, 'info', 2600);
+  }
 
   canThrow(): boolean {
     return true;
@@ -139,6 +147,22 @@ export class SoloRules implements Rules {
     this.knockedThisThrow = 0;
     this.lastThrow = null;
     this.cleared = false;
+    this.resumed = false;
+  }
+
+  /** Счёт между бросками — для сохранения раунда (перезагрузка страницы не должна его обнулять). */
+  exportState(): SoloState {
+    return { throwsUsed: this.throwsUsed, ...this.scorer.exportState() };
+  }
+
+  /** Принимает только проверенное состояние: сохранение лежит в localStorage, и править его может кто угодно. */
+  importState(raw: unknown): void {
+    const st = parseSoloState(raw, this.level);
+    if (!st) return;
+    this.scorer.importState(st);
+    this.throwsUsed = st.throwsUsed;
+    this.practice = false;
+    this.resumed = true;
   }
 
   /** Обучение ещё идёт (для движка: подсказки и сброс при рестарте). */

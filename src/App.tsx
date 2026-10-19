@@ -1,8 +1,10 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { sound } from './game/audio/sound';
+import type { MatchSyncState } from './game/engine/GameEngine';
 import { LEVELS } from './game/levels/levels';
 import type { MatchConfig, RoundResult, Seat } from './game/types';
 import { applyRoundResult, emptySave, isLevelUnlocked, loadSave, writeSave, type RecordOutcome, type SaveData } from './storage/progress';
+import { clearAllRounds, clearDuelRound, clearSoloRound, loadDuelRound } from './storage/roundSave';
 import { hashToRoute, routeToHash, type Route } from './ui/routes';
 import { AboutScreen } from './ui/screens/AboutScreen';
 import { GameScreen } from './ui/screens/GameScreen';
@@ -37,8 +39,15 @@ export function App() {
   const saveRef = useRef(save);
   saveRef.current = save;
   const depth = useRef(0);
-  /** Текущий матч вдвоём (живёт только в памяти; после перезагрузки — снова настройка). */
-  const [match, setMatch] = useState<{ id: number; config: MatchConfig } | null>(null);
+  /**
+   * Текущий матч вдвоём. После перезагрузки страницы на экране матча он поднимается из сохранения
+   * (счёт и кон после последнего броска); если сохранения нет — снова экран настройки.
+   */
+  const [match, setMatch] = useState<{ id: number; config: MatchConfig; restore?: MatchSyncState } | null>(() => {
+    if (hashToRoute(window.location.hash).name !== 'MATCH') return null;
+    const saved = loadDuelRound();
+    return saved ? { id: 1, config: saved.config, restore: saved.state } : null;
+  });
 
   const reducedMotion = useMemo(() => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false, []);
 
@@ -53,6 +62,17 @@ export function App() {
   useEffect(() => {
     document.title = TITLES[route.name];
     if (route.name !== 'PLAYING') window.scrollTo(0, 0);
+  }, [route]);
+
+  // Сохранённый раунд нужен только для перезагрузки страницы. Если игрок сам ушёл с экрана игры (меню,
+  // другой уровень, «Назад»), старый раунд не воскрешаем. Сравниваем маршруты, а не размонтирование
+  // экрана: в StrictMode экраны монтируются дважды, а при перезагрузке предыдущего маршрута нет.
+  const prevRoute = useRef(route);
+  useEffect(() => {
+    const prev = prevRoute.current;
+    prevRoute.current = route;
+    if (prev.name === 'PLAYING' && (route.name !== 'PLAYING' || route.levelId !== prev.levelId)) clearSoloRound();
+    if (prev.name === 'MATCH' && route.name !== 'MATCH') clearDuelRound();
   }, [route]);
 
   const updateSave = useCallback((fn: (s: SaveData) => SaveData) => {
@@ -100,6 +120,7 @@ export function App() {
   }, [updateSave]);
 
   const resetProgress = useCallback(() => {
+    clearAllRounds();
     updateSave((s) => ({ ...emptySave(), settings: { ...s.settings, tutorialDone: false } }));
   }, [updateSave]);
 
@@ -107,6 +128,7 @@ export function App() {
 
   const startMatch = useCallback(
     (config: MatchConfig) => {
+      clearDuelRound(); // новый матч — старое сохранение не нужно
       updateSave((s) => ({ ...s, settings: { ...s.settings, duelNames: config.players, duelLayout: config.layoutId, duelHandoff: !!config.handoff } }));
       setMatch((m) => ({ id: (m?.id ?? 0) + 1, config }));
       navigate({ name: 'MATCH' });
@@ -132,6 +154,7 @@ export function App() {
 
   // реванш: тот же состав и кон, первым бросает другой игрок
   const rematch = useCallback(() => {
+    clearDuelRound();
     setMatch((m) => (m ? { id: m.id + 1, config: { ...m.config, first: (m.config.first === 0 ? 1 : 0) as Seat, rematch: true } } : m));
   }, []);
 
@@ -207,6 +230,7 @@ export function App() {
         <MatchScreen
           key={match.id}
           config={match.config}
+          restore={match.restore}
           muted={save.settings.muted}
           reducedMotion={reducedMotion}
           onToggleMute={toggleMute}

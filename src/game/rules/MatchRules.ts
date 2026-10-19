@@ -75,6 +75,11 @@ export class MatchRules implements Rules {
     const toss = !this.config.rematch && !this.started;
     this.started = true;
     const who = this.name(this.current);
+    // броски уже есть — матч восстановлен после перезагрузки страницы
+    if (this.total > 0) {
+      this.host.say(`Матч продолжен · ходит ${who}`, 'info', 2600);
+      return;
+    }
     this.host.say(toss ? `Жеребьёвка асыком: первым бросает ${who}` : `Первым бросает ${who}`, 'info', 2600);
   }
 
@@ -224,8 +229,9 @@ export class MatchRules implements Rules {
     this.bestCombo = [...st.bestCombo];
     this.total = st.total;
     this.started = true;
-    // после синхронизации ход уже начат: экран передачи устройства не нужен (в онлайне он и не используется)
-    this.handoffPending = false;
+    // онлайн экран передачи не используется (handoffEnabled = false); на одном устройстве после перезагрузки
+    // страницы телефон могли отдать другому игроку, поэтому снова просим нажать «Готов»
+    this.handoffPending = this.handoffEnabled;
   }
 
   sakaPalette(): AsykPalette {

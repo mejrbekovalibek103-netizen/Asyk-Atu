@@ -31,6 +31,8 @@ export interface EngineOptions {
   /** Первый запуск: пробный бросок с подсказками. */
   tutorial: boolean;
   reducedMotion: boolean;
+  /** Продолжить сохранённый раунд/матч (после перезагрузки страницы): кон и счёт из сохранения. Данные должны быть проверены. */
+  restore?: MatchSyncState;
 }
 
 /** Онлайн-матч: что движок отправляет сопернику. */
@@ -50,6 +52,8 @@ export interface MatchSyncState {
 export interface EngineCallbacks {
   onTutorialDone?(): void;
   onPauseRequest?(): void;
+  /** Бросок подведён, всё стоит на месте и игра продолжается: самый удобный момент сохранить раунд. */
+  onCheckpoint?(state: MatchSyncState): void;
   net?: NetHooks;
 }
 
@@ -132,6 +136,13 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
     this.renderer = new Renderer(canvas, this.layout);
     this.physics = this.buildWorld();
     this.rules.attach(this);
+    if (opts.restore) {
+      // продолжаем сохранённый раунд: обучение уже пройдено (пробный бросок делается до первого сохранения)
+      this.physics.importAsyks(opts.restore.asyks, this.layout.asyks, true);
+      this.rules.importState?.(opts.restore.rules);
+      this.tutorialPending = false;
+      this.tutorialStep = null;
+    }
     this.input = new AimInput(canvas, (x, y) => this.renderer.screenToWorld(x, y), this);
     this.snapshot = this.buildSnapshot();
     // шрифты для надписей мелом на фоне
@@ -656,6 +667,7 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
         this.setPhase('READY');
         this.hand.sakaInHand = true;
         this.hand.reload = 0;
+        this.cb.onCheckpoint?.(this.exportMatchState());
         break;
     }
     this.emit();

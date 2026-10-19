@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { sound } from '../../game/audio/sound';
-import { GameEngine } from '../../game/engine/GameEngine';
+import { GameEngine, type MatchSyncState } from '../../game/engine/GameEngine';
 import { getMatchLayout } from '../../game/levels/matchLayouts';
 import { MatchRules } from '../../game/rules/MatchRules';
 import type { MatchConfig, MatchHud, MatchResult, Seat } from '../../game/types';
+import { clearDuelRound, saveDuelRound } from '../../storage/roundSave';
 import { Icon } from '../components/Icon';
 import { PowerMeter, RotateHint, Toast } from '../game/GameOverlays';
 import { HandoffCard, PlayerCard, TurnBanner } from '../game/MatchParts';
@@ -14,6 +15,8 @@ import { PauseMenu } from './PauseMenu';
 
 interface Props {
   config: MatchConfig;
+  /** Продолжить сохранённый матч (после перезагрузки страницы). */
+  restore?: MatchSyncState;
   muted: boolean;
   reducedMotion: boolean;
   onToggleMute: () => void;
@@ -35,11 +38,18 @@ export function MatchScreen(props: Props) {
         canvas,
         {
           layout,
-          rules: new MatchRules(config, setResult),
+          rules: new MatchRules(config, (r) => {
+            clearDuelRound(); // матч окончен — продолжать нечего
+            setResult(r);
+          }),
           tutorial: false,
           reducedMotion: props.reducedMotion,
+          restore: props.restore,
         },
-        { onPauseRequest: () => setPauseOpen((p) => !p) },
+        {
+          onPauseRequest: () => setPauseOpen((p) => !p),
+          onCheckpoint: (state) => saveDuelRound(config, state),
+        },
       ),
     config,
   );
@@ -53,6 +63,7 @@ export function MatchScreen(props: Props) {
 
   const restart = useCallback(() => {
     sound.uiClick();
+    clearDuelRound();
     setResult(null);
     setPauseOpen(false);
     engine?.restart();
