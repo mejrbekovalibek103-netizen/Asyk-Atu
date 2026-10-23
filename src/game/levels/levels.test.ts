@@ -66,13 +66,14 @@ describe('конфигурация испытаний', () => {
     for (const l of LEVELS) expect(l.timeLimit !== undefined, `${l.order}. ${l.name}`).toBe(l.order > 10);
   });
 
-  it('лимиты времени разумны: кратны 5 с и 8–16 секунд на бросок', () => {
+  it('лимиты времени разумны: кратны 5 с и 5–16 секунд на бросок', () => {
     for (const l of LEVELS.filter((x) => x.timeLimit !== undefined)) {
       const t = l.timeLimit!;
       expect(Number.isInteger(t) && t % 5 === 0, `${l.name}: ${t} с`).toBe(true);
       const perThrow = t / l.throws;
-      // сам бросок вместе с паузой занимает около 2 с, остальное — прицеливание и размышление
-      expect(perThrow, `${l.name}: ${perThrow.toFixed(1)} с на бросок`).toBeGreaterThanOrEqual(8);
+      // сам бросок вместе с паузой занимает около 2 с, остальное — прицеливание и размышление;
+      // ниже 5 с на бросок остаётся меньше 3 с на прицел — это уже не испытание, а лотерея
+      expect(perThrow, `${l.name}: ${perThrow.toFixed(1)} с на бросок`).toBeGreaterThanOrEqual(5);
       expect(perThrow, `${l.name}: ${perThrow.toFixed(1)} с на бросок`).toBeLessThanOrEqual(16);
     }
   });
