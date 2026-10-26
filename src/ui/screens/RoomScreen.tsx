@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import type { MatchSyncState } from '../../game/engine/GameEngine';
 import { getMatchLayout } from '../../game/levels/matchLayouts';
 import type { MatchConfig, Seat } from '../../game/types';
-import { makeClientId } from '../../net/protocol';
+import { formatRoomCode, makeClientId } from '../../net/protocol';
 import { onlineAvailable } from '../../net/config';
 import { getRoom, type Room } from '../../net/room';
 import { loadRoomSession, saveRoomSession, type RoomSession } from '../../net/session';
@@ -10,6 +10,7 @@ import { totalOf } from '../../net/sync';
 import { Icon } from '../components/Icon';
 import { LevelPreview } from '../components/LevelPreview';
 import { cleanName, NAME_MAX } from '../format';
+import { LobbySlot, PlayerSlots, RoomCodeCard } from '../game/LobbyParts';
 import { OnlineMatchScreen } from './OnlineMatchScreen';
 
 interface Props {
@@ -22,7 +23,7 @@ interface Props {
   onExit: () => void;
 }
 
-/** Комната онлайн-матча: вход по ссылке → ожидание соперника → матч(и). */
+/** Комната онлайн-матча: вход по ссылке или коду → ожидание соперника → матч(и). */
 export function RoomScreen(props: Props) {
   const [session, setSession] = useState<RoomSession | null>(() => loadRoomSession(props.code));
 
@@ -122,7 +123,7 @@ function RoomLive(props: Props & { session: RoomSession }) {
   };
 
   if (snap.status === 'full') {
-    return <Notice title="Комната занята" text="В этой комнате уже играют двое. Попроси друга создать новую ссылку." onExit={props.onExit} />;
+    return <Notice title="Комната занята" text="В этой комнате уже играют двое. Попроси друга создать новую комнату." onExit={props.onExit} />;
   }
 
   if (match) {
@@ -174,28 +175,14 @@ function Lobby({
 }) {
   const isHost = session.seat === 0;
   const link = `${window.location.origin}${window.location.pathname}#/room/${code}`;
-  const [copied, setCopied] = useState(false);
   const layout = session.layoutId ? getMatchLayout(session.layoutId) : null;
-  const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(link);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // буфер обмена недоступен — ссылку можно выделить вручную
-    }
-  };
-  const share = async () => {
-    try {
-      await navigator.share({ title: 'Асық ату — сыграем?', text: `Сыграем в асық ату онлайн! Комната ${code}`, url: link });
-    } catch {
-      // пользователь закрыл окно «Поделиться»
-    }
-  };
-
   const connecting = status === 'connecting' || status === 'reconnecting';
+  // места за столом: сейчас их два (хозяин и гость)
+  const slots: LobbySlot[] = [
+    { seat: 0, name: isHost ? session.name : opponent, you: isHost, host: true },
+    { seat: 1, name: isHost ? opponent : session.name, you: !isHost, host: false },
+  ];
+
   return (
     <main className="page page--doc">
       <div className="doc">
@@ -203,34 +190,12 @@ function Lobby({
           <Icon name="back" /> Выйти
         </button>
         <p className="kicker">Онлайн-матч</p>
-        <h1 className="doc__title">
-          Комната <span className="room-code">{code}</span>
-        </h1>
+        <h1 className="doc__title">Комната ожидания</h1>
 
-        {isHost ? (
-          <section className="lobby-card">
-            <h2>Пригласи друга</h2>
-            <p className="doc__muted">Отправь ссылку — друг откроет её на своём телефоне или компьютере.</p>
-            <div className="share-row">
-              <input className="share-row__link" value={link} readOnly aria-label="Ссылка на комнату" onFocus={(e) => e.currentTarget.select()} />
-              <button className="btn" onClick={copy}>
-                {copied ? 'Скопировано ✓' : 'Копировать'}
-              </button>
-              {canShare && (
-                <button className="btn btn--primary" onClick={share}>
-                  Поделиться
-                </button>
-              )}
-            </div>
-          </section>
-        ) : null}
+        <RoomCodeCard code={code} link={link} />
 
         <section className="lobby-card lobby-card--status" aria-live="polite">
-          <div className="lobby-players">
-            <span className="lobby-player lobby-player--0">{isHost ? `${session.name} · вы` : opponent ?? 'Хозяин комнаты'}</span>
-            <span className="lobby-vs">vs</span>
-            <span className="lobby-player lobby-player--1">{isHost ? opponent ?? 'ждём…' : `${session.name} · вы`}</span>
-          </div>
+          <PlayerSlots slots={slots} />
           {connecting ? (
             <p className="lobby-status">Подключаемся к комнате…</p>
           ) : isHost ? (
@@ -286,7 +251,7 @@ function JoinRoom({ code, defaultName, onJoin, onExit }: { code: string; default
         </button>
         <p className="kicker">Тебя позвали сыграть</p>
         <h1 className="doc__title">
-          Комната <span className="room-code">{code}</span>
+          Комната <span className="room-code">{formatRoomCode(code)}</span>
         </h1>
         <p className="doc__lead">Асық ату онлайн: бросаете по очереди, побеждает тот, кто выбьет больше асыков.</p>
         <form

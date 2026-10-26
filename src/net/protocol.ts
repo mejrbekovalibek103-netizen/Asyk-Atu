@@ -76,6 +76,23 @@ export function normalizeRoomCode(raw: string): string | null {
   return code.length === ROOM_CODE_LENGTH && [...code].every((c) => ROOM_ALPHABET.includes(c)) ? code : null;
 }
 
+/**
+ * Код комнаты из того, что игрок ввёл или вставил: сам код (с дефисом, пробелами, строчными буквами),
+ * ссылка на комнату (`…#/room/ABCDEFGHJK`) или фраза с кодом («Комната ABCDE-FGHJK»).
+ * Ничего не открывает и не исполняет — только ищет 10 допустимых символов; неверный ввод → null.
+ */
+export function parseRoomCodeInput(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const text = raw.slice(0, 300); // огромные вставки не разбираем
+  const direct = normalizeRoomCode(text);
+  if (direct) return direct;
+  const link = /\/room\/([A-Za-z0-9-]{4,24})/.exec(text);
+  if (link) return normalizeRoomCode(link[1]);
+  // два блока по 5 символов, отделённых дефисом, пробелом или слитно, не внутри длинного слова
+  const block = /(?:^|[^A-Za-z0-9])([A-Za-z0-9]{5})[-\s]?([A-Za-z0-9]{5})(?![A-Za-z0-9])/.exec(text);
+  return block ? normalizeRoomCode(block[1] + block[2]) : null;
+}
+
 /** Код для показа человеку: ABCDE-FGHJK. */
 export function formatRoomCode(code: string): string {
   return `${code.slice(0, ROOM_CODE_LENGTH / 2)}-${code.slice(ROOM_CODE_LENGTH / 2)}`;

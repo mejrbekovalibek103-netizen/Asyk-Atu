@@ -1772,33 +1772,107 @@ button {
   font-size: 14px;
   color: var(--ink-2);
 }
-.lobby-players {
+/* список мест за столом (лобби): рассчитан на 2–4 игроков */
+.lobby-slots {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+@media (min-width: 640px) {
+  .lobby-slots {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.lobby-slot {
+  display: flex;
   align-items: center;
   gap: 10px;
-  text-align: center;
-}
-.lobby-player {
-  padding: 10px 8px;
-  border-radius: 12px;
-  font-weight: 800;
+  min-width: 0;
+  padding: 8px 12px;
   background: var(--bg);
-  border-bottom: 4px solid var(--player);
+  border-left: 6px solid var(--player);
+  border-radius: 12px;
+}
+.lobby-slot--empty {
+  opacity: 0.7;
+  border-left-style: dashed;
+  color: var(--muted);
+}
+.lobby-slot__name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 800;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.lobby-player--0 {
-  --player: #e0553a;
+.lobby-slot__tag {
+  flex: none;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--bg-2);
+  color: var(--ink-2);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
-.lobby-player--1 {
-  --player: #8b5cf6;
+.lobby-slot__tag--you {
+  background: var(--player);
+  color: #fff;
 }
-.lobby-vs {
+
+/* код комнаты */
+.code-card {
+  text-align: center;
+}
+.code-card__label {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.code-card__code {
+  margin: 6px 0 4px;
   font-family: var(--font-display);
   font-weight: 800;
-  color: var(--muted);
+  font-size: clamp(24px, 7.4vw, 44px);
+  letter-spacing: 0.1em;
+  white-space: nowrap; /* код не должен переноситься по дефису */
+  color: var(--sky-600);
+  user-select: all;
+}
+.code-card__how {
+  font-size: 14px;
+}
+.code-card .share-row {
+  justify-content: center;
+}
+
+/* вход по коду */
+.mode-switch--sub {
+  margin-top: 10px;
+}
+.code-field input {
+  font-family: var(--font-display);
+  font-size: 20px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.code-field input::placeholder {
+  text-transform: none;
+}
+.code-hint--ok {
+  color: var(--grass);
+  font-weight: 800;
+}
+.code-hint--error {
+  color: #b0261f;
+  font-weight: 700;
 }
 .lobby-status {
   margin: 16px 0 6px;

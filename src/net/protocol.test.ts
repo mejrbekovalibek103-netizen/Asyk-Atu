@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { hashToRoute, routeToHash } from '../ui/routes';
-import { CLIENT_ID_RE, formatRoomCode, makeClientId, makeRoomCode, normalizeRoomCode, ROOM_CODE_LENGTH } from './protocol';
+import { CLIENT_ID_RE, formatRoomCode, makeClientId, makeRoomCode, normalizeRoomCode, parseRoomCodeInput, ROOM_CODE_LENGTH } from './protocol';
 
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
@@ -68,6 +68,41 @@ describe('код комнаты', () => {
     expect(normalizeRoomCode('ABCDEFGH0K')).toBeNull(); // 0 не входит в алфавит
     expect(normalizeRoomCode('../../etc/passwd')).toBeNull();
     expect(normalizeRoomCode('<script>')).toBeNull();
+  });
+
+  describe('ввод кода игроком (parseRoomCodeInput)', () => {
+    it('код в любом виде: с дефисом, пробелами, строчными, слитно', () => {
+      for (const v of ['ABCDE-FGHJK', 'abcde-fghjk', 'abcdefghjk', ' ABCDE FGHJK ', 'AbCdE-fGhJk']) expect(parseRoomCodeInput(v), v).toBe('ABCDEFGHJK');
+    });
+
+    it('вставленная ссылка и фраза с кодом', () => {
+      expect(parseRoomCodeInput('https://example.github.io/Asyk-Atu/#/room/ABCDEFGHJK')).toBe('ABCDEFGHJK');
+      expect(parseRoomCodeInput('http://localhost:5173/#/room/abcdefghjk')).toBe('ABCDEFGHJK');
+      expect(parseRoomCodeInput('Сыграем в асық ату онлайн! Код комнаты: ABCDE-FGHJK')).toBe('ABCDEFGHJK');
+      expect(parseRoomCodeInput('Комната ABCDE FGHJK, заходи')).toBe('ABCDEFGHJK');
+      expect(parseRoomCodeInput('Code: ABCDEFGHJK')).toBe('ABCDEFGHJK');
+    });
+
+    it('неполный, слишком длинный и неверный ввод отклоняется', () => {
+      for (const v of ['', '   ', 'ABCD', 'ABCDE-FGHJ', 'ABCDEFGHJKM', 'ABCDE-FGHJ0', '../../etc/passwd', '<script>alert(1)</script>', 'https://evil.example/#/room/ABCDEFGH', 'привет']) {
+        expect(parseRoomCodeInput(v), v).toBeNull();
+      }
+    });
+
+    it('не строка и огромный ввод не ломают разбор', () => {
+      for (const v of [null, undefined, 5, {}, [], true]) expect(parseRoomCodeInput(v)).toBeNull();
+      expect(parseRoomCodeInput('x'.repeat(1_000_000))).toBeNull();
+      expect(parseRoomCodeInput('A'.repeat(5000) + ' ABCDE-FGHJK')).toBeNull(); // код за пределами разбираемой части
+    });
+
+    it('результат всегда проходит проверку нормализации (только допустимые символы нужной длины)', () => {
+      for (let i = 0; i < 200; i++) {
+        const code = makeRoomCode();
+        for (const form of [code, formatRoomCode(code), code.toLowerCase(), `#/room/${code}`, `Комната ${formatRoomCode(code)}!`]) {
+          expect(parseRoomCodeInput(form)).toBe(code);
+        }
+      }
+    });
   });
 
   it('формат для человека', () => {

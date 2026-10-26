@@ -6,6 +6,7 @@ import { AsykIcon } from '../components/AsykIcon';
 import { Icon } from '../components/Icon';
 import { LevelPreview } from '../components/LevelPreview';
 import { onlineAvailable } from '../../net/config';
+import { formatRoomCode, parseRoomCodeInput, ROOM_CODE_LENGTH } from '../../net/protocol';
 import { cleanName, NAME_MAX } from '../format';
 
 interface Props {
@@ -14,20 +15,46 @@ interface Props {
   initialLayoutId: string;
   initialHandoff: boolean;
   onStart: (config: MatchConfig) => void;
-  /** Онлайн: создать комнату и получить ссылку для друга. */
+  /** Онлайн: создать комнату и получить код и ссылку для друга. */
   onCreateRoom: (name: string, layoutId: string) => void;
+  /** Онлайн: войти в чужую комнату по коду. */
+  onJoinRoom: (name: string, code: string) => void;
   onBack: () => void;
 }
 
 type Mode = 'local' | 'online';
+type OnlineAction = 'create' | 'join';
 
-export function MatchSetupScreen({ initialNames, initialOnlineName, initialLayoutId, initialHandoff, onStart, onCreateRoom, onBack }: Props) {
+/** Подсказка под полем кода: сколько символов введено и что делать дальше. */
+function codeHint(input: string, code: string | null): { text: string; tone: 'idle' | 'ok' | 'error' } {
+  if (code) return { text: `Комната ${formatRoomCode(code)}`, tone: 'ok' };
+  const typed = input.replace(/[^A-Za-z0-9]/g, '').length;
+  if (typed === 0) return { text: `Код — ${ROOM_CODE_LENGTH} символов, его покажет друг в своей комнате`, tone: 'idle' };
+  if (typed < ROOM_CODE_LENGTH) return { text: `Введено ${typed} из ${ROOM_CODE_LENGTH}`, tone: 'idle' };
+  return { text: 'Не похоже на код комнаты: нужны буквы и цифры, без 0, O, 1, I, L', tone: 'error' };
+}
+
+/** Пока вводят сам код, показываем его в виде ABCDE-FGHJK; вставленную ссылку или фразу не трогаем. */
+function formatTyped(raw: string): string {
+  if (raw.length > 12 || /[/:]/.test(raw)) return raw;
+  const clean = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (clean.length > ROOM_CODE_LENGTH) return raw;
+  const half = ROOM_CODE_LENGTH / 2;
+  return clean.length > half ? `${clean.slice(0, half)}-${clean.slice(half)}` : clean;
+}
+
+export function MatchSetupScreen({ initialNames, initialOnlineName, initialLayoutId, initialHandoff, onStart, onCreateRoom, onJoinRoom, onBack }: Props) {
   const [names, setNames] = useState<[string, string]>(initialNames);
   const [onlineName, setOnlineName] = useState(initialOnlineName || initialNames[0]);
   const [layoutId, setLayoutId] = useState(initialLayoutId);
   const [handoff, setHandoff] = useState(initialHandoff);
   const [mode, setMode] = useState<Mode>('local');
   const online = mode === 'online';
+  const [action, setAction] = useState<OnlineAction>('create');
+  const [codeInput, setCodeInput] = useState('');
+  const joining = online && action === 'join';
+  const roomCode = parseRoomCodeInput(codeInput);
+  const hint = codeHint(codeInput, roomCode);
 
   const start = () => {
     const players: [string, string] = [cleanName(names[0], 'Игрок 1'), cleanName(names[1], 'Игрок 2')];
@@ -45,7 +72,9 @@ export function MatchSetupScreen({ initialNames, initialOnlineName, initialLayou
         </button>
         <h1 className="doc__title">Игра вдвоём</h1>
         <p className="doc__lead">
-          {online ? 'Каждый играет на своём телефоне или компьютере — создай комнату и отправь ссылку другу.' : 'Два игрока на одном устройстве — передавайте телефон или мышь по очереди.'}
+          {online
+            ? 'Каждый играет на своём телефоне или компьютере: создай комнату и отправь другу код или ссылку — или введи код друга.'
+            : 'Два игрока на одном устройстве — передавайте телефон или мышь по очереди.'}
         </p>
 
         {onlineAvailable && (
@@ -53,7 +82,7 @@ export function MatchSetupScreen({ initialNames, initialOnlineName, initialLayou
             {(
               [
                 ['local', 'На одном устройстве'],
-                ['online', 'Онлайн по ссылке'],
+                ['online', 'Онлайн по коду'],
               ] as const
             ).map(([value, label]) => (
               <label key={value} className={`mode-switch__option${mode === value ? ' mode-switch__option--on' : ''}`}>
@@ -65,6 +94,22 @@ export function MatchSetupScreen({ initialNames, initialOnlineName, initialLayou
                   className="sr-only"
                 />
                 <Icon name={value === 'local' ? 'users' : 'globe'} /> {label}
+              </label>
+            ))}
+          </div>
+        )}
+
+        {online && (
+          <div className="mode-switch mode-switch--sub" role="radiogroup" aria-label="Создать комнату или войти по коду">
+            {(
+              [
+                ['create', 'Создать комнату'],
+                ['join', 'Войти по коду'],
+              ] as const
+            ).map(([value, label]) => (
+              <label key={value} className={`mode-switch__option${action === value ? ' mode-switch__option--on' : ''}`}>
+                <input type="radio" name="online-action" value={value} checked={action === value} onChange={() => setAction(value)} className="sr-only" />
+                {label}
               </label>
             ))}
           </div>
@@ -95,7 +140,9 @@ export function MatchSetupScreen({ initialNames, initialOnlineName, initialLayou
           className="setup"
           onSubmit={(e) => {
             e.preventDefault();
-            if (online) onCreateRoom(cleanName(onlineName, 'Игрок 1'), layoutId);
+            if (joining) {
+              if (roomCode) onJoinRoom(cleanName(onlineName, 'Игрок 2'), roomCode);
+            } else if (online) onCreateRoom(cleanName(onlineName, 'Игрок 1'), layoutId);
             else start();
           }}
         >
@@ -114,7 +161,9 @@ export function MatchSetupScreen({ initialNames, initialOnlineName, initialLayou
                   onChange={(e) => setOnlineName(e.target.value)}
                 />
               </label>
-              <p className="setup__hint">Ты создаёшь комнату и выбираешь кон. Друг войдёт по ссылке и введёт своё имя.</p>
+              <p className="setup__hint">
+                {joining ? 'Это имя увидит хозяин комнаты.' : 'Ты создаёшь комнату и выбираешь кон. Друг войдёт по коду или по ссылке и введёт своё имя.'}
+              </p>
             </fieldset>
           ) : (
           <fieldset className="setup__group">
@@ -151,6 +200,36 @@ export function MatchSetupScreen({ initialNames, initialOnlineName, initialLayou
           </fieldset>
           )}
 
+          {joining && (
+            <fieldset className="setup__group">
+              <legend>Код комнаты</legend>
+              <label className="name-field code-field" style={{ '--player': '#8b5cf6' } as React.CSSProperties}>
+                <Icon name="globe" size={24} />
+                <span className="sr-only">Код комнаты</span>
+                <input
+                  type="text"
+                  value={codeInput}
+                  maxLength={300}
+                  placeholder="ABCDE-FGHJK"
+                  autoComplete="off"
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  inputMode="text"
+                  enterKeyHint="go"
+                  aria-invalid={hint.tone === 'error'}
+                  aria-describedby="code-hint"
+                  onChange={(e) => setCodeInput(formatTyped(e.target.value))}
+                />
+              </label>
+              <p id="code-hint" className={`setup__hint code-hint code-hint--${hint.tone}`} role="status">
+                {hint.text}
+              </p>
+              <p className="setup__hint">Можно вставить и всю ссылку на комнату — код найдётся сам.</p>
+            </fieldset>
+          )}
+
+          {!joining && (
           <fieldset className="setup__group">
             <legend>Кон</legend>
             <div className="layout-picker" role="radiogroup" aria-label="Расстановка асыков">
@@ -170,9 +249,14 @@ export function MatchSetupScreen({ initialNames, initialOnlineName, initialLayou
               ))}
             </div>
           </fieldset>
+          )}
 
-          <button type="submit" className="btn btn--primary btn--xl btn--block">
-            {online ? (
+          <button type="submit" className="btn btn--primary btn--xl btn--block" disabled={joining && !roomCode}>
+            {joining ? (
+              <>
+                <Icon name="globe" /> Войти в комнату
+              </>
+            ) : online ? (
               <>
                 <Icon name="globe" /> Создать комнату
               </>
