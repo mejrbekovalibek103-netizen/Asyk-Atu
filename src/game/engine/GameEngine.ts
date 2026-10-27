@@ -9,7 +9,7 @@ import { Effects } from '../render/effects';
 import { Renderer, type HandAnim, type SceneView } from '../render/Renderer';
 import { contactFromEvent, ThrowPlayer, ThrowRecorder, type ThrowChunk, type ThrowEnd, type ThrowStart } from '../replay/throwRecord';
 import type { Rules, RulesHost } from '../rules/Rules';
-import type { HudMessage, HudSnapshot, KonLayout, Phase, TutorialStep, Vec2 } from '../types';
+import type { HudMessage, HudSnapshot, KonLayout, Phase, Seat, TutorialStep, Vec2 } from '../types';
 
 /**
  * Разрешённые переходы между фазами. Любой другой переход игнорируется —
@@ -533,6 +533,19 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
     const saka = this.physics.saka;
     if (end.saka && saka) this.physics.place(saka, end.saka[0], end.saka[1], end.saka[2]);
     this.resolveThrow();
+  }
+
+  /**
+   * Онлайн, 3–4 игрока: ход отсутствующего игрока пропускается (решение принято снаружи по присутствию в
+   * комнате и проверено). Возможно только между бросками; дальше всё как после обычного броска.
+   */
+  skipTurn(seat: Seat, throwNo: number): boolean {
+    if (this.phase !== 'READY' || !this.rules.skipTurn?.(seat, throwNo)) return false;
+    this.remoteAim = null;
+    const step = this.rules.next();
+    if (step.kind === 'finish' && this.setPhase('ROUND_COMPLETE')) this.rules.onFinish();
+    this.emit();
+    return true;
   }
 
   /** Счёт и кон для переподключившегося соперника. */

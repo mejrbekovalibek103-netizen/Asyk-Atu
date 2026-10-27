@@ -1,19 +1,22 @@
 import { createClient, type RealtimeChannel, type SupabaseClient } from '@supabase/supabase-js';
+import { MAX_PLAYERS } from '../game/rules/matchState';
 import type { Seat } from '../game/types';
 import { SUPABASE_KEY, SUPABASE_URL } from './config';
 import { LIMITS, RATES, RateLimiter, StrikeCounter } from './limits';
-import type { Envelope, NetMessage, PeerInfo } from './protocol';
+import { CLIENT_ID_RE, type Envelope, type NetMessage, type PeerInfo } from './protocol';
+import { mustYieldSeat, pickFreeSeat, resolveSeats } from './seats';
 import { parseEnvelope, parsePeer } from './validate';
 
 /**
- * Комната онлайн-матча поверх Supabase Realtime.
+ * Комната онлайн-матча поверх Supabase Realtime (2–4 игрока).
  *
  * - broadcast — сообщения игроков (прицел, запись броска, синхронизация);
- * - presence — кто сейчас в комнате (имя и место за «столом»).
+ * - presence — кто сейчас в комнате (имя, место за «столом», идёт ли у него матч).
  * Базы данных и таблиц нет: сервер только пересылает сообщения.
  *
- * Всё входящее проходит «таможню» (см. `handleBroadcast`): размер → разбор и проверка → закреплённый
- * отправитель → лимит частоты → счётчик нарушений. Недоверенные данные до игры не доходят.
+ * Всё входящее проходит «таможню» (см. `handleBroadcast`): размер → разбор и проверка → отправитель известен
+ * (занимает место или входит в состав матча) → лимит частоты этого отправителя → его счётчик нарушений.
+ * Недоверенные данные до игры не доходят, а один спамер не блокирует остальных игроков.
  */
 
 let client: SupabaseClient | null = null;
@@ -33,28 +36,34 @@ function getClient(): SupabaseClient {
   return client;
 }
 
-export type RoomStatus = 'connecting' | 'online' | 'reconnecting' | 'full' | 'closed';
+/**
+ * - `full` — свободных мест нет (или моё место занято, а я хозяин);
+ * - `busy` — в комнате идёт матч без меня: ждём его конца, место не занимаем.
+ */
+export type RoomStatus = 'connecting' | 'online' | 'reconnecting' | 'full' | 'busy' | 'closed';
 
 export interface RoomSnapshot {
   status: RoomStatus;
+  /** Моё место (гость получает его после входа; null — ещё не занял). */
+  seat: Seat | null;
   /** Все остальные участники комнаты (прошедшие проверку формата). */
   peers: PeerInfo[];
-  /** Закреплённый соперник — единственный, чьи сообщения принимаются. */
-  peer: PeerInfo | null;
-  /** Соперник присылает слишком много некорректных данных: временно игнорируется. */
-  badPeer: boolean;
-  /** Сколько в комнате посторонних (кроме двух игроков). */
+  /** Игроки по местам комнаты (кроме меня): индекс — место, null — свободно. */
+  seats: (PeerInfo | null)[];
+  /** id игроков, чьи сообщения временно игнорируются из-за потока некорректных данных. */
+  bad: string[];
+  /** Сколько в комнате посторонних (без места и не в составе матча). */
   intruders: number;
 }
 
 export interface MessageContext {
   from: string;
-  /** Место отправителя (определено по закреплённому соперника, а не заявлено в сообщении). */
-  seat: Seat;
+  /** Место отправителя в комнате (по закреплению, а не по его словам); null — известен только по составу матча. */
+  seat: Seat | null;
 }
 
 /** Сколько сообщений от ещё не опознанного отправителя ждём появления его в presence. */
-const PENDING_MAX = 30;
+const PENDING_MAX = 60;
 const PENDING_TTL_MS = 3_000;
 
 const rooms = new Map<string, Room>();
@@ -64,7 +73,7 @@ const rooms = new Map<string, Room>();
  * модулей, быстрый выход и вход) возвращает тот же объект и отменяет его отложенное закрытие, поэтому
  * для одного кода никогда не создаётся два канала.
  */
-export function getRoom(code: string, me: PeerInfo): Room {
+export function getRoom(code: string, me: { clientId: string; seat: Seat | null; name: string }): Room {
   const key = `${code}:${me.clientId}`;
   let room = rooms.get(key);
   if (!room) {
@@ -74,24 +83,41 @@ export function getRoom(code: string, me: PeerInfo): Room {
   return room;
 }
 
+/** Учёт одного отправителя: лимиты частоты по типам сообщений и счётчик нарушений. */
+interface SenderGuard {
+  limiters: Map<string, RateLimiter>;
+  strikes: StrikeCounter;
+  timer: number | null;
+}
+
 export class Room {
   private channel: RealtimeChannel | null = null;
-  private snapshot: RoomSnapshot = { status: 'connecting', peers: [], peer: null, badPeer: false, intruders: 0 };
+  private me: { clientId: string; seat: Seat | null; name: string; busy: boolean };
+  private snapshot: RoomSnapshot;
   private readonly messageHandlers = new Set<(msg: NetMessage, ctx: MessageContext) => void>();
   private readonly listeners = new Set<() => void>();
+  private readonly seatListeners = new Set<(seat: Seat) => void>();
   private tracked = false;
   private closeTimer: number | null = null;
-  private pinnedId: string | null = null;
-  private readonly limiters = new Map<string, RateLimiter>();
-  private readonly strikes = new StrikeCounter();
-  private badTimer: number | null = null;
+  /** Закреплённые места: место → id игрока. */
+  private pins: (string | null)[] = Array.from({ length: MAX_PLAYERS }, () => null);
+  /** Состав текущего матча (id по местам матча) — их сообщения принимаются, даже если место в комнате потеряно. */
+  private roster: string[] | null = null;
+  private readonly guards = new Map<string, SenderGuard>();
   private pending: { env: Envelope; at: number }[] = [];
 
   constructor(
     readonly code: string,
-    readonly me: PeerInfo,
+    me: { clientId: string; seat: Seat | null; name: string },
     private readonly onDisposed?: () => void,
-  ) {}
+  ) {
+    this.me = { ...me, busy: false };
+    this.snapshot = { status: 'connecting', seat: me.seat, peers: [], seats: Array.from({ length: MAX_PLAYERS }, () => null), bad: [], intruders: 0 };
+  }
+
+  get clientId(): string {
+    return this.me.clientId;
+  }
 
   connect(): void {
     // повторное подключение сразу после close() (React StrictMode монтирует дважды) — оставляем канал
@@ -116,50 +142,16 @@ export class Room {
     });
 
     ch.on('broadcast', { event: 'm' }, ({ payload }) => this.handleBroadcast(payload));
-
-    ch.on('presence', { event: 'sync' }, () => {
-      const state = ch.presenceState();
-      const byId = new Map<string, PeerInfo>();
-      for (const list of Object.values(state)) {
-        for (const raw of list as unknown[]) {
-          const p = parsePeer(raw);
-          if (p && p.clientId !== this.me.clientId) byId.set(p.clientId, p);
-        }
-      }
-      const peers = [...byId.values()];
-      // в комнате уже есть игрок на моём месте — значит, это не моя партия (третий лишний)
-      if (!this.tracked && peers.some((p) => p.seat === this.me.seat)) {
-        this.set({ ...this.snapshot, status: 'full', peers });
-        void this.closeNow();
-        return;
-      }
-      // соперник закрепляется за первым, кто занял противоположное место, и остаётся им, пока в комнате:
-      // позже пришедший с тем же местом не может «перехватить» игру
-      const opposite = peers.filter((p) => p.seat !== this.me.seat);
-      let peer = this.pinnedId ? (opposite.find((p) => p.clientId === this.pinnedId) ?? null) : null;
-      if (!peer) {
-        peer = opposite[0] ?? null;
-        this.pinnedId = peer?.clientId ?? null;
-      }
-      this.set({ ...this.snapshot, peers, peer, intruders: peers.length - (peer ? 1 : 0) });
-      if (peer) this.flushPending();
-      if (!this.tracked && this.snapshot.status === 'online') {
-        this.tracked = true;
-        void ch.track(this.me);
-      }
-    });
+    ch.on('presence', { event: 'sync' }, () => this.onPresence(ch));
 
     ch.subscribe((status) => {
       if (status === 'SUBSCRIBED') {
-        this.set({ ...this.snapshot, status: 'online' });
-        // track — после первого снимка presence (проверка «место занято»); на переподключении — сразу
-        if (this.tracked) void ch.track(this.me);
+        this.set({ ...this.snapshot, status: this.snapshot.status === 'full' || this.snapshot.status === 'busy' ? this.snapshot.status : 'online' });
+        // track — после первого снимка presence (выбор и проверка места); на переподключении — сразу
+        if (this.tracked) this.track();
         else
           window.setTimeout(() => {
-            if (!this.tracked && this.snapshot.status === 'online') {
-              this.tracked = true;
-              void ch.track(this.me);
-            }
+            if (!this.tracked && this.snapshot.status === 'online') this.onPresence(ch);
           }, 1200);
       } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
         // realtime-js сам переподключается; показываем статус
@@ -171,46 +163,140 @@ export class Room {
     this.channel = ch;
   }
 
+  private readPeers(ch: RealtimeChannel): PeerInfo[] {
+    const byId = new Map<string, PeerInfo>();
+    for (const list of Object.values(ch.presenceState())) {
+      for (const raw of list as unknown[]) {
+        const p = parsePeer(raw);
+        if (p && p.clientId !== this.me.clientId) byId.set(p.clientId, p);
+      }
+    }
+    return [...byId.values()];
+  }
+
+  private onPresence(ch: RealtimeChannel): void {
+    const peers = this.readPeers(ch);
+    let status = this.snapshot.status === 'connecting' ? 'online' : this.snapshot.status;
+
+    if (!this.tracked) {
+      if (this.me.seat === null) {
+        // гость без места: пока идёт чужой матч — ждём; иначе занимаем свободное место
+        if (peers.some((p) => p.busy)) {
+          status = 'busy';
+        } else {
+          const free = pickFreeSeat(peers);
+          if (free === null) status = 'full';
+          else this.takeSeat(free);
+        }
+      } else if (this.me.seat === 0 && peers.some((p) => p.seat === 0)) {
+        // хозяйское место занято другим: это не моя комната (или открыта вторая вкладка хозяина)
+        status = 'full';
+      } else if (this.me.seat !== 0 && peers.some((p) => p.seat === this.me.seat) && !this.roster) {
+        // моё место гостя заняли, пока меня не было — ищу другое свободное
+        const free = pickFreeSeat(peers); // моё прежнее место занято (оно среди мест пришедших)
+        if (free === null) status = 'full';
+        else this.takeSeat(free);
+      }
+      if (this.me.seat !== null && status !== 'full') {
+        status = 'online';
+        this.tracked = true;
+        this.track();
+      }
+    } else if (!this.roster && mustYieldSeat(this.me.seat, this.me.clientId, peers)) {
+      // два гостя одновременно сели на одно место: уступает тот, у кого id больше (то есть я)
+      const free = pickFreeSeat(peers); // моё место занято тем, кому я уступаю
+      if (free === null) status = 'full';
+      else {
+        this.takeSeat(free);
+        this.track();
+      }
+    } else if (status === 'busy' && !peers.some((p) => p.busy)) {
+      status = 'online';
+    }
+
+    // закрепление мест: моё место — только моё (самозванец на нём не получает голоса)
+    const seats = resolveSeats(this.pins, peers);
+    if (this.me.seat !== null) seats[this.me.seat] = null;
+    this.pins = seats.map((p) => p?.clientId ?? null);
+    const known = new Set([...this.pins.filter((x): x is string => !!x), ...(this.roster ?? [])]);
+    const intruders = peers.filter((p) => !known.has(p.clientId)).length;
+    this.set({ ...this.snapshot, status: status as RoomStatus, seat: this.me.seat, peers, seats, intruders });
+    this.flushPending();
+    if (status === 'full') void this.closeNow();
+  }
+
+  private takeSeat(seat: Seat): void {
+    this.me = { ...this.me, seat };
+    for (const l of this.seatListeners) l(seat);
+  }
+
+  private track(): void {
+    const ch = this.channel;
+    if (!ch || this.me.seat === null) return;
+    const payload: PeerInfo = { clientId: this.me.clientId, seat: this.me.seat, name: this.me.name };
+    if (this.me.busy) payload.busy = true;
+    void ch.track(payload);
+  }
+
+  /** Отправитель известен: занимает место в комнате или входит в состав текущего матча. */
+  private isKnown(id: string): boolean {
+    return this.pins.includes(id) || (this.roster?.includes(id) ?? false);
+  }
+
+  private seatOf(id: string): Seat | null {
+    const i = this.pins.indexOf(id);
+    return i >= 0 ? (i as Seat) : null;
+  }
+
   /**
    * «Таможня» входящих сообщений. Любая ошибка проверки — отбросить, не бросая исключений наружу;
-   * слишком частые или некорректные сообщения копятся в счётчике нарушений.
+   * слишком частые или некорректные сообщения копятся в счётчике нарушений отправителя.
    */
   private handleBroadcast(payload: unknown): void {
-    // пока соперник заблокирован, не тратим на него время: ни разбора, ни новых нарушений
-    if (this.strikes.isBlocked()) return;
-    if (typeof payload !== 'object' || payload === null) return this.reject();
+    // кто прислал (если поле похоже на id известного игрока) — чтобы засчитать нарушение именно ему
+    const claimed = typeof payload === 'object' && payload !== null ? (payload as { from?: unknown }).from : undefined;
+    const senderId = typeof claimed === 'string' && CLIENT_ID_RE.test(claimed) && this.isKnown(claimed) ? claimed : null;
+    if (senderId && this.guard(senderId).strikes.isBlocked()) return; // пока заблокирован — ни разбора, ни нарушений
+    if (typeof payload !== 'object' || payload === null) return;
     let size = 0;
     try {
       size = JSON.stringify(payload).length;
     } catch {
-      return this.reject(); // циклическая или необычная структура
+      return this.reject(senderId); // циклическая или необычная структура
     }
-    if (size > LIMITS.maxEnvelopeBytes) return this.reject();
+    if (size > LIMITS.maxEnvelopeBytes) return this.reject(senderId);
     const env = parseEnvelope(payload);
-    if (!env) return this.reject();
+    if (!env) return this.reject(senderId);
     if (env.from === this.me.clientId) return;
-    if (!this.pinnedId) {
+    if (!this.isKnown(env.from)) {
       // отправитель ещё не появился в presence — подождём немного (порядок событий в сети не гарантирован)
       this.pending.push({ env, at: performance.now() });
       if (this.pending.length > PENDING_MAX) this.pending.shift();
       return;
     }
-    if (env.from !== this.pinnedId) return; // посторонний в комнате — молча игнорируем
     this.dispatch(env);
   }
 
+  private guard(id: string): SenderGuard {
+    let g = this.guards.get(id);
+    if (!g) {
+      g = { limiters: new Map(), strikes: new StrikeCounter(), timer: null };
+      this.guards.set(id, g);
+    }
+    return g;
+  }
+
   private dispatch(env: Envelope): void {
-    if (this.strikes.isBlocked()) return;
-    let limiter = this.limiters.get(env.msg.t);
+    const g = this.guard(env.from);
+    if (g.strikes.isBlocked()) return;
+    let limiter = g.limiters.get(env.msg.t);
     if (!limiter) {
       const [rate, burst] = RATES[env.msg.t] ?? [2, 3];
       limiter = new RateLimiter(rate, burst);
-      this.limiters.set(env.msg.t, limiter);
+      g.limiters.set(env.msg.t, limiter);
     }
-    if (!limiter.take()) return this.reject();
-    const peer = this.snapshot.peer;
-    if (!peer) return;
-    const ctx: MessageContext = { from: env.from, seat: peer.seat };
+    if (!limiter.take()) return this.reject(env.from);
+    const ctx: MessageContext = { from: env.from, seat: this.seatOf(env.from) };
     for (const h of this.messageHandlers) {
       try {
         h(env.msg, ctx);
@@ -224,27 +310,51 @@ export class Room {
     const now = performance.now();
     const items = this.pending;
     this.pending = [];
-    for (const { env, at } of items) {
-      if (now - at <= PENDING_TTL_MS && env.from === this.pinnedId) this.dispatch(env);
+    for (const item of items) {
+      if (now - item.at > PENDING_TTL_MS) continue;
+      if (this.isKnown(item.env.from)) this.dispatch(item.env);
+      else this.pending.push(item);
     }
   }
 
-  private reject(): void {
-    const blocked = this.strikes.strike();
-    if (blocked && !this.snapshot.badPeer) {
-      this.set({ ...this.snapshot, badPeer: true });
-      this.armBadPeerReset();
+  /** Нарушение отправителя (если он известен). Набралось много — временная блокировка и отметка в снимке. */
+  private reject(id: string | null): void {
+    if (!id) return;
+    const g = this.guard(id);
+    if (g.strikes.strike() && !this.snapshot.bad.includes(id)) {
+      this.set({ ...this.snapshot, bad: [...this.snapshot.bad, id] });
+      this.armBadReset(id);
     }
   }
 
-  /** Снять отметку «соперник присылает мусор», когда блокировка закончилась (пока идёт — перезапускаем таймер). */
-  private armBadPeerReset(): void {
-    if (this.badTimer !== null) window.clearTimeout(this.badTimer);
-    this.badTimer = window.setTimeout(() => {
-      this.badTimer = null;
-      if (this.strikes.isBlocked()) this.armBadPeerReset();
-      else if (this.snapshot.badPeer) this.set({ ...this.snapshot, badPeer: false });
-    }, this.strikes.remainingMs() + 250);
+  /** Снять отметку «присылает мусор», когда блокировка закончилась (пока идёт — перезапускаем таймер). */
+  private armBadReset(id: string): void {
+    const g = this.guard(id);
+    if (g.timer !== null) window.clearTimeout(g.timer);
+    g.timer = window.setTimeout(() => {
+      g.timer = null;
+      if (g.strikes.isBlocked()) this.armBadReset(id);
+      else if (this.snapshot.bad.includes(id)) this.set({ ...this.snapshot, bad: this.snapshot.bad.filter((x) => x !== id) });
+    }, g.strikes.remainingMs() + 250);
+  }
+
+  /** Состав текущего матча (id по местам матча) или null вне матча. */
+  setRoster(ids: string[] | null): void {
+    this.roster = ids ? [...ids] : null;
+    this.flushPending();
+  }
+
+  /** Идёт ли у меня матч (виден остальным: новичок не займёт место посреди матча). */
+  setBusy(busy: boolean): void {
+    if (this.me.busy === busy) return;
+    this.me = { ...this.me, busy };
+    if (this.tracked) this.track();
+  }
+
+  /** Подписка на выбор места гостем (чтобы сохранить его в сессии и вернуться на него после перезагрузки). */
+  onSeat(fn: (seat: Seat) => void): () => void {
+    this.seatListeners.add(fn);
+    return () => this.seatListeners.delete(fn);
   }
 
   send(msg: NetMessage): void {
@@ -281,7 +391,7 @@ export class Room {
   async closeNow(): Promise<void> {
     const ch = this.channel;
     this.channel = null;
-    if (this.badTimer !== null) window.clearTimeout(this.badTimer);
+    for (const g of this.guards.values()) if (g.timer !== null) window.clearTimeout(g.timer);
     if (ch) await getClient().removeChannel(ch);
     this.onDisposed?.();
   }

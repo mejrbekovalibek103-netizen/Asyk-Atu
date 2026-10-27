@@ -121,7 +121,8 @@ export interface SoloHud {
   timerRunning: boolean;
 }
 
-export type Seat = 0 | 1;
+/** Место за «столом» матча: 0…3 (в матче на двоих — только 0 и 1). */
+export type Seat = 0 | 1 | 2 | 3;
 
 export interface MatchPlayerHud {
   name: string;
@@ -129,16 +130,19 @@ export interface MatchPlayerHud {
   throws: number;
 }
 
-/** Данные HUD матча вдвоём. */
+/** Данные HUD матча (2–4 игрока). */
 export interface MatchHud {
   kind: 'match';
-  players: [MatchPlayerHud, MatchPlayerHud];
+  /** Игроки по местам: индекс — место (Seat). */
+  players: MatchPlayerHud[];
   /** Чей сейчас ход. */
   current: Seat;
   /** Растёт при каждой смене хода — для баннера «Ход: …». */
   turnId: number;
   totalThrows: number;
   maxThrows: number;
+  /** Бросков на каждого игрока (15 у двоих, 10 у троих и четверых). */
+  throwsPerPlayer: number;
   asyksLeft: number;
   totalAsyks: number;
   /** Онлайн: за какого игрока этот экран (null — оба на одном устройстве). */
@@ -189,21 +193,29 @@ export interface RoundResult {
 
 export interface MatchConfig {
   layoutId: string;
-  players: [string, string];
+  /** Имена игроков по местам: 2–4 игрока (на одном устройстве — всегда двое). */
+  players: string[];
   /** Кто бросает первым (результат жеребьёвки или очерёдность реванша). */
   first: Seat;
   /** Реванш: без жеребьёвки, первым бросает другой игрок. */
   rematch?: boolean;
   /** Одно устройство: перед каждым ходом показывать экран «Передайте устройство». */
   handoff?: boolean;
+  /**
+   * Онлайн: id клиентов по местам — состав матча, закреплённый хозяином при старте. Сообщения принимаются
+   * только от этих игроков, а место отправителя определяется по этому списку, а не по его словам.
+   */
+  ids?: string[];
 }
 
 export interface MatchResult {
   layoutId: string;
-  players: [MatchPlayerResult, MatchPlayerResult];
-  /** null — ничья. */
-  winner: Seat | null;
+  /** Игроки по местам. */
+  players: MatchPlayerResult[];
+  /** Места с наибольшим числом выбитых асыков: один победитель или несколько (ничья). */
+  winners: Seat[];
   totalThrows: number;
+  throwsPerPlayer: number;
   /** 'cleared' — кон опустел, 'limit' — закончились броски. */
   reason: 'cleared' | 'limit';
 }

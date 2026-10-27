@@ -129,7 +129,7 @@ export function App() {
   const startMatch = useCallback(
     (config: MatchConfig) => {
       clearDuelRound(); // новый матч — старое сохранение не нужно
-      updateSave((s) => ({ ...s, settings: { ...s.settings, duelNames: config.players, duelLayout: config.layoutId, duelHandoff: !!config.handoff } }));
+      updateSave((s) => ({ ...s, settings: { ...s.settings, duelNames: [config.players[0] ?? '', config.players[1] ?? ''], duelLayout: config.layoutId, duelHandoff: !!config.handoff } }));
       setMatch((m) => ({ id: (m?.id ?? 0) + 1, config }));
       navigate({ name: 'MATCH' });
     },
@@ -151,7 +151,8 @@ export function App() {
   const joinRoom = useCallback(
     (name: string, code: string) => {
       // если эта вкладка уже была в комнате с этим кодом (например, хозяин), возвращаемся на своё место
-      if (!loadRoomSession(code)) saveRoomSession(code, { clientId: makeClientId(), seat: 1, name, layoutId: '', match: null });
+      // место гость выберет сам, когда увидит, кто уже в комнате
+      if (!loadRoomSession(code)) saveRoomSession(code, { clientId: makeClientId(), seat: null, name, layoutId: '', match: null });
       updateSave((s) => ({ ...s, settings: { ...s.settings, onlineName: name } }));
       navigate({ name: 'ROOM', code });
     },
@@ -166,7 +167,7 @@ export function App() {
   // реванш: тот же состав и кон, первым бросает другой игрок
   const rematch = useCallback(() => {
     clearDuelRound();
-    setMatch((m) => (m ? { id: m.id + 1, config: { ...m.config, first: (m.config.first === 0 ? 1 : 0) as Seat, rematch: true } } : m));
+    setMatch((m) => (m ? { id: m.id + 1, config: { ...m.config, first: ((m.config.first + 1) % m.config.players.length) as Seat, rematch: true } } : m));
   }, []);
 
   // закрытое или несуществующее испытание в адресе → экран выбора

@@ -14,13 +14,15 @@ export interface LobbySlot {
   name: string | null;
   you: boolean;
   host: boolean;
+  /** Будущее место в матче (порядок занятых мест) — от него цвет сақа; нет — место свободно. */
+  order?: number;
 }
 
 export function PlayerSlots({ slots }: { slots: LobbySlot[] }) {
   return (
     <ul className="lobby-slots" aria-label="Игроки в комнате">
       {slots.map((s) => {
-        const style = PLAYER_STYLE[s.seat];
+        const style = s.order === undefined ? undefined : PLAYER_STYLE[s.order];
         return (
           <li key={s.seat} className={`lobby-slot${s.name ? ' lobby-slot--on' : ' lobby-slot--empty'}`} style={{ '--player': style?.color ?? '#9aa0a6' } as React.CSSProperties}>
             <AsykIcon palette={style?.palette ?? 'saka'} size={28} ghost={!s.name} />

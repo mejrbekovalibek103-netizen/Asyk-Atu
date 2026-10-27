@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { MATCH_LAYOUTS } from '../../game/levels/matchLayouts';
-import { MATCH_MAX_THROWS, PLAYER_STYLE } from '../../game/rules/MatchRules';
+import { PLAYER_STYLE, throwsPerPlayer } from '../../game/rules/MatchRules';
 import type { MatchConfig, Seat } from '../../game/types';
 import { AsykIcon } from '../components/AsykIcon';
 import { Icon } from '../components/Icon';
@@ -73,7 +73,7 @@ export function MatchSetupScreen({ initialNames, initialOnlineName, initialLayou
         <h1 className="doc__title">Игра вдвоём</h1>
         <p className="doc__lead">
           {online
-            ? 'Каждый играет на своём телефоне или компьютере: создай комнату и отправь другу код или ссылку — или введи код друга.'
+            ? 'Каждый играет на своём телефоне или компьютере, за столом до четырёх игроков: создай комнату и отправь друзьям код или ссылку — или введи код друга.'
             : 'Два игрока на одном устройстве — передавайте телефон или мышь по очереди.'}
         </p>
 
@@ -131,7 +131,7 @@ export function MatchSetupScreen({ initialNames, initialOnlineName, initialLayou
           <div className="rules-card__item">
             <span className="rules-card__num">3</span>
             <p>
-              <b>Кон пуст — матч окончен.</b> Побеждает тот, кто выбил больше асыков. Лимит — по {MATCH_MAX_THROWS / 2} бросков на каждого.
+              <b>Кон пуст — матч окончен.</b> Побеждает тот, кто выбил больше асыков. Лимит — по {throwsPerPlayer(2)} бросков на каждого.
             </p>
           </div>
         </section>
@@ -169,7 +169,7 @@ export function MatchSetupScreen({ initialNames, initialOnlineName, initialLayou
           <fieldset className="setup__group">
             <legend>Игроки</legend>
             <div className="setup__players">
-              {([0, 1] as Seat[]).map((seat) => (
+              {([0, 1] as const).map((seat) => (
                 <label key={seat} className="name-field" style={{ '--player': PLAYER_STYLE[seat].color } as React.CSSProperties}>
                   <AsykIcon palette={PLAYER_STYLE[seat].palette} size={30} />
                   <span className="sr-only">Имя игрока {seat + 1}</span>

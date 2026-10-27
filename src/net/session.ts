@@ -3,6 +3,7 @@ import type { MatchConfig, Seat } from '../game/types';
 import { cleanName } from '../ui/format';
 import { LIMITS } from './limits';
 import { CLIENT_ID_RE } from './protocol';
+import { MAX_PLAYERS } from '../game/rules/matchState';
 import { int, isKnownLayout, parseMatchConfig, parseStoredSyncState } from './validate';
 
 /**
@@ -11,7 +12,8 @@ import { int, isKnownLayout, parseMatchConfig, parseStoredSyncState } from './va
  */
 export interface RoomSession {
   clientId: string;
-  seat: Seat;
+  /** Место в комнате: 0 — хозяин, 1–3 — гости; null — гость ещё не занял место (только что вошёл). */
+  seat: Seat | null;
   name: string;
   /** Кон, выбранный хостом при создании комнаты. */
   layoutId: string;
@@ -38,7 +40,8 @@ export function loadRoomSession(code: string): RoomSession | null {
     if (typeof s !== 'object' || s === null || Array.isArray(s)) return null;
     const r = s as Record<string, unknown>;
     if (typeof r.clientId !== 'string' || !CLIENT_ID_RE.test(r.clientId)) return null;
-    if (r.seat !== 0 && r.seat !== 1) return null;
+    const seat = r.seat === null ? null : int(r.seat, 0, MAX_PLAYERS - 1);
+    if (seat === null && r.seat !== null) return null;
     let match: RoomSession['match'] = null;
     if (typeof r.match === 'object' && r.match !== null) {
       const m = r.match as Record<string, unknown>;
@@ -46,14 +49,14 @@ export function loadRoomSession(code: string): RoomSession | null {
       const matchId = int(m.matchId, 1, LIMITS.maxMatchId);
       if (config && matchId !== null) {
         match = { config, matchId };
-        const state = m.state === undefined ? null : parseStoredSyncState(m.state, config.layoutId);
+        const state = m.state === undefined ? null : parseStoredSyncState(m.state, config.layoutId, config.players.length);
         if (state) match.state = state;
       }
     }
     return {
       clientId: r.clientId,
-      seat: r.seat,
-      name: cleanName(r.name, r.seat === 0 ? 'Хозяин' : 'Гость'),
+      seat: seat as Seat | null,
+      name: cleanName(r.name, seat === 0 ? 'Хозяин' : 'Гость'),
       layoutId: isKnownLayout(r.layoutId) ? r.layoutId : '',
       match,
     };

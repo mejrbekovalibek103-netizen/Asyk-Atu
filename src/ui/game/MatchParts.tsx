@@ -52,7 +52,7 @@ export function HandoffCard({ hud, y, onReady }: { hud: MatchHud; y: number; onR
 
 /**
  * Крупная надпись при каждой смене хода. На одном устройстве — «Ход: имя» (сигнал передать телефон),
- * в онлайне — «Ваш ход» или «Ход соперника».
+ * в онлайне — «Ваш ход» или «Ходит: имя» (соперников может быть до трёх).
  */
 export function TurnBanner({ hud, y }: { hud: MatchHud; y: number }) {
   const p = hud.players[hud.current];
@@ -60,7 +60,7 @@ export function TurnBanner({ hud, y }: { hud: MatchHud; y: number }) {
   const mine = hud.localSeat === hud.current;
   return (
     <div key={hud.turnId} className="turn-banner" style={{ top: y, '--player': PLAYER_STYLE[hud.current].color } as React.CSSProperties} aria-hidden="true">
-      <span className="turn-banner__label">{online ? (mine ? 'Ваш ход' : 'Ход соперника') : 'Ход'}</span>
+      <span className="turn-banner__label">{online ? (mine ? 'Ваш ход' : 'Ходит') : 'Ход'}</span>
       <span className="turn-banner__name">{p.name}</span>
     </div>
   );

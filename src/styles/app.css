@@ -1529,6 +1529,25 @@ button {
 .hud__stats--match {
   grid-template-columns: 1fr 1fr;
 }
+/* онлайн на троих и четверых: трое — в ряд, четверо — сеткой 2×2 на телефоне и в ряд на широком экране */
+.hud__stats--p3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.hud__stats--p3 .player-card,
+.hud__stats--p4 .player-card {
+  padding-left: 8px;
+  padding-right: 8px;
+  gap: 6px;
+}
+.hud__stats--p3 .player-card__name,
+.hud__stats--p4 .player-card__name {
+  font-size: 13px;
+}
+@media (min-width: 640px) {
+  .hud__stats--p4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
 .player-card {
   position: relative;
   display: flex;
@@ -1586,6 +1605,10 @@ button {
     display: grid;
     max-width: 460px;
     margin: 0 auto;
+  }
+  .hud__stats--p3,
+  .hud__stats--p4 {
+    max-width: 680px;
   }
 }
 
@@ -1647,6 +1670,21 @@ button {
   grid-template-columns: 1fr 1fr;
   gap: 10px;
   margin-top: 4px;
+}
+/* трое и четверо: сетка 2×2 (у троих последний занимает всю строку) */
+.match-score--3 > :last-child {
+  grid-column: 1 / -1;
+}
+.match-score--3 .match-score__knocked,
+.match-score--4 .match-score__knocked {
+  font-size: 32px;
+}
+.match-score__place {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 .match-score__player {
   position: relative;

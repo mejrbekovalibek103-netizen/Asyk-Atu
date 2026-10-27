@@ -97,7 +97,7 @@ describe('отказ на недопустимое', () => {
     bad({ t: 'aim', a: { angle: Infinity, power: 0.5 } });
     bad({ t: 'aim', a: { angle: '0.1', power: 0.5 } });
     bad({ t: 'throwStart', s: { throwIndex: 0, angle: 0, power: 0.5 } });
-    bad({ t: 'throwStart', s: { throwIndex: 31, angle: 0, power: 0.5 } });
+    bad({ t: 'throwStart', s: { throwIndex: 41, angle: 0, power: 0.5 } }); // больше лимита самого длинного матча (4 × 10)
     bad({ t: 'throwStart', s: { throwIndex: 1.5, angle: 0, power: 0.5 } });
   });
 
@@ -176,7 +176,9 @@ describe('очистка данных', () => {
 
   it('presence с неверным id или местом отвергается', () => {
     expect(parsePeer({ clientId: 'не hex', seat: 0, name: 'a' })).toBeNull();
-    expect(parsePeer({ clientId: makeClientId(), seat: 2, name: 'a' })).toBeNull();
+    expect(parsePeer({ clientId: makeClientId(), seat: 4, name: 'a' })).toBeNull(); // мест 0–3
+    expect(parsePeer({ clientId: makeClientId(), seat: 1.5, name: 'a' })).toBeNull();
+    expect(parsePeer({ clientId: makeClientId(), seat: '1', name: 'a' })).toBeNull();
     expect(parsePeer(null)).toBeNull();
   });
 });
@@ -234,5 +236,63 @@ describe('ограничение по типам: итог броска без �
   it('ThrowEnd проходит с saka = null', () => {
     const e: ThrowEnd = { steps: 5, final: [], saka: null };
     expect(parseThrowEnd(json(e))).toEqual(e);
+  });
+});
+
+describe('матч на 2–4 игрока: конфиг, состав, присутствие, пропуск хода', () => {
+  const ids4 = [makeClientId(), makeClientId(), makeClientId(), makeClientId()];
+  const cfg = (over: Record<string, unknown> = {}) => ({ layoutId: 'korgan', players: ['А', 'Б', 'В', 'Г'], first: 2, ids: ids4, ...over });
+  const parseCfg = (c: unknown) => {
+    const m = parseNetMessage({ t: 'start', config: c, matchId: 1 });
+    return m && m.t === 'start' ? m.config : null;
+  };
+
+  it('конфиг на 2, 3 и 4 игрока принимается, состав сохраняется', () => {
+    expect(parseCfg(cfg())).toEqual(cfg());
+    expect(parseCfg(cfg({ players: ['А', 'Б', 'В'], ids: ids4.slice(0, 3), first: 0 }))?.players).toHaveLength(3);
+    expect(parseCfg(cfg({ players: ['А', 'Б'], ids: ids4.slice(0, 2), first: 1 }))?.players).toHaveLength(2);
+    expect(parseCfg({ layoutId: 'korgan', players: ['А', 'Б'], first: 0 })?.ids).toBeUndefined(); // без состава (одно устройство)
+  });
+
+  it('игроков меньше двух или больше четырёх, первый вне стола — отказ', () => {
+    expect(parseCfg(cfg({ players: ['А'], ids: ids4.slice(0, 1), first: 0 }))).toBeNull();
+    expect(parseCfg(cfg({ players: ['А', 'Б', 'В', 'Г', 'Д'], ids: [...ids4, makeClientId()] }))).toBeNull();
+    expect(parseCfg(cfg({ first: 4 }))).toBeNull();
+    expect(parseCfg(cfg({ first: -1 }))).toBeNull();
+  });
+
+  it('состав: число id = числу игроков, формат id, без повторов', () => {
+    expect(parseCfg(cfg({ ids: ids4.slice(0, 3) }))).toBeNull();
+    expect(parseCfg(cfg({ ids: [ids4[0], ids4[0], ids4[2], ids4[3]] }))).toBeNull();
+    expect(parseCfg(cfg({ ids: [ids4[0], 'не id', ids4[2], ids4[3]] }))).toBeNull();
+    expect(parseCfg(cfg({ ids: 'abc' }))).toBeNull();
+  });
+
+  it('имена игроков очищаются, пустые — «Игрок N»', () => {
+    expect(parseCfg(cfg({ players: ['‮evil', '', '   ', 'Г'] }))?.players).toEqual(['evil', 'Игрок 2', 'Игрок 3', 'Г']);
+  });
+
+  it('presence: места 0–3 и отметка «в матче»', () => {
+    expect(parsePeer({ clientId: ids4[0], seat: 3, name: 'Г', busy: true })).toEqual({ clientId: ids4[0], seat: 3, name: 'Г', busy: true });
+    expect(parsePeer({ clientId: ids4[0], seat: 2, name: 'В', busy: 'yes' })).toEqual({ clientId: ids4[0], seat: 2, name: 'В' });
+  });
+
+  it('пропуск хода: место 0–3 и номер хода, иначе отказ', () => {
+    expect(parseNetMessage({ t: 'skip', seat: 2, turnId: 7 })).toEqual({ t: 'skip', seat: 2, turnId: 7 });
+    for (const bad of [{ seat: 4, turnId: 7 }, { seat: 1, turnId: 0 }, { seat: 1.5, turnId: 7 }, { seat: 1 }, { seat: '1', turnId: 7 }]) {
+      expect(parseNetMessage({ t: 'skip', ...bad }), JSON.stringify(bad)).toBeNull();
+    }
+  });
+
+  it('снимок матча на четверых проверяется по числу игроков из конфига', () => {
+    const layout = getMatchLayout('korgan');
+    const w = new PhysicsWorld();
+    w.addAsyks(layout.asyks);
+    const state = { asyks: w.exportAsyks(layout.asyks.length), rules: { current: 3, turnId: 4, knocked: [0, 0, 0, 0], throws: [1, 1, 1, 0], bestCombo: [0, 0, 0, 0], total: 3, finished: false } };
+    const ok = parseNetMessage({ t: 'sync', config: cfg(), matchId: 2, state });
+    expect(ok && ok.t === 'sync' ? ok.state.rules : null).toEqual(state.rules);
+    // массивы на двоих при конфиге на четверых — отказ
+    const bad = parseNetMessage({ t: 'sync', config: cfg(), matchId: 2, state: { ...state, rules: { ...state.rules, knocked: [0, 0], throws: [2, 1], bestCombo: [0, 0] } } });
+    expect(bad).toBeNull();
   });
 });

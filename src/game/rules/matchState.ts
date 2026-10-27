@@ -1,48 +1,70 @@
 import type { Seat } from '../types';
 
-/** Страховка от бесконечного матча: максимум бросков на двоих (чётное — поровну каждому). */
-export const MATCH_MAX_THROWS = 30;
+/** Игроков в матче: на одном устройстве — двое, онлайн — от двух до четырёх. */
+export const MIN_PLAYERS = 2;
+export const MAX_PLAYERS = 4;
 
-/** Счёт матча для синхронизации устройств (и для сохранения в sessionStorage). */
+/**
+ * Бросков на каждого игрока. У двоих — по 15; у троих и четверых — по 10, чтобы матч не затягивался,
+ * пока каждый ждёт своей очереди (решение владельца проекта).
+ */
+export function throwsPerPlayer(players: number): number {
+  return players <= 2 ? 15 : 10;
+}
+
+/** Страховка от бесконечного матча: всего бросков (поровну на каждого). */
+export function matchThrowLimit(players: number): number {
+  return throwsPerPlayer(players) * players;
+}
+
+/** Наибольший лимит бросков среди всех составов — для проверки входящих сообщений. */
+export const MAX_MATCH_THROWS = Math.max(...[2, 3, 4].map(matchThrowLimit));
+
+/** Счёт матча для синхронизации устройств (и для сохранения в sessionStorage / localStorage). Массивы — по местам. */
 export interface MatchState {
   current: Seat;
   turnId: number;
-  knocked: [number, number];
-  throws: [number, number];
-  bestCombo: [number, number];
+  knocked: number[];
+  throws: number[];
+  bestCombo: number[];
   total: number;
   finished: boolean;
 }
 
 const isInt = (v: unknown, lo: number, hi: number): v is number => typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi;
 
-function pair(v: unknown, lo: number, hi: number): [number, number] | null {
-  if (!Array.isArray(v) || v.length !== 2) return null;
-  const [a, b] = v as unknown[];
-  return isInt(a, lo, hi) && isInt(b, lo, hi) ? [a, b] : null;
+function intArray(v: unknown, length: number, lo: number, hi: number): number[] | null {
+  if (!Array.isArray(v) || v.length !== length) return null;
+  const out: number[] = [];
+  for (const x of v as unknown[]) {
+    if (!isInt(x, lo, hi)) return null;
+    out.push(x);
+  }
+  return out;
 }
 
 /**
- * Строгая проверка присланного/сохранённого состояния матча. Возвращает НОВЫЙ объект только с
- * известными полями (лишние отбрасываются) или null, если данные недопустимы или противоречивы.
+ * Строгая проверка присланного/сохранённого состояния матча на `players` игроков. Возвращает НОВЫЙ объект
+ * только с известными полями (лишние отбрасываются) или null, если данные недопустимы или противоречивы.
  * Применяется ко всему, что приходит из сети и из хранилища браузера.
  */
-export function parseMatchState(raw: unknown, totalAsyks: number): MatchState | null {
-  if (typeof raw !== 'object' || raw === null) return null;
+export function parseMatchState(raw: unknown, totalAsyks: number, players: number): MatchState | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+  if (!isInt(players, MIN_PLAYERS, MAX_PLAYERS)) return null;
   const r = raw as Record<string, unknown>;
-  const half = MATCH_MAX_THROWS / 2;
-  const knocked = pair(r.knocked, 0, totalAsyks);
-  const throws = pair(r.throws, 0, half);
-  const bestCombo = pair(r.bestCombo, 0, totalAsyks);
+  const per = throwsPerPlayer(players);
+  const knocked = intArray(r.knocked, players, 0, totalAsyks);
+  const throws = intArray(r.throws, players, 0, per);
+  const bestCombo = intArray(r.bestCombo, players, 0, totalAsyks);
   if (!knocked || !throws || !bestCombo) return null;
-  if (r.current !== 0 && r.current !== 1) return null;
+  if (!isInt(r.current, 0, players - 1)) return null;
   if (!isInt(r.turnId, 1, 1_000_000)) return null;
-  if (!isInt(r.total, 0, MATCH_MAX_THROWS)) return null;
+  if (!isInt(r.total, 0, matchThrowLimit(players))) return null;
   if (typeof r.finished !== 'boolean') return null;
-  // непротиворечивость: бросков поровну (первый мог бросить на один больше), выбито не больше, чем асыков
-  if (throws[0] + throws[1] !== r.total) return null;
-  if (Math.abs(throws[0] - throws[1]) > 1) return null;
-  if (knocked[0] + knocked[1] > totalAsyks) return null;
-  if (bestCombo[0] > knocked[0] || bestCombo[1] > knocked[1]) return null;
-  return { current: r.current, turnId: r.turnId, knocked, throws, bestCombo, total: r.total, finished: r.finished };
+  // непротиворечивость: броски по кругу (у кого-то может быть на один больше), выбито не больше, чем асыков
+  if (throws.reduce((a, b) => a + b, 0) !== r.total) return null;
+  if (Math.max(...throws) - Math.min(...throws) > 1) return null;
+  if (knocked.reduce((a, b) => a + b, 0) > totalAsyks) return null;
+  if (bestCombo.some((c, i) => c > knocked[i])) return null;
+  return { current: r.current as Seat, turnId: r.turnId, knocked, throws, bestCombo, total: r.total, finished: r.finished };
 }

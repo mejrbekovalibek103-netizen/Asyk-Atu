@@ -137,7 +137,8 @@ export function loadDuelRound(now = Date.now()): StoredDuel | null {
   const r = readRaw(DUEL_KEY, now);
   if (!r) return null;
   const parsed = parseMatchConfig(r.config);
-  if (!parsed || !KNOWN_LAYOUTS.has(parsed.layoutId)) return null;
+  // на одном устройстве играют ровно двое; состав онлайн-матча (ids) здесь не нужен
+  if (!parsed || !KNOWN_LAYOUTS.has(parsed.layoutId) || parsed.players.length !== 2 || parsed.ids) return null;
   // «Передайте устройство» — настройка одиночной игры: parseMatchConfig намеренно не принимает её из сети
   const config: MatchConfig = (r.config as Stored).handoff === true ? { ...parsed, handoff: true } : parsed;
 
@@ -146,7 +147,7 @@ export function loadDuelRound(now = Date.now()): StoredDuel | null {
   const st = r.state as Stored | null;
   if (typeof st !== 'object' || st === null) return null;
   const count = layout.asyks.length;
-  const rules = parseMatchState(st.rules, count);
+  const rules = parseMatchState(st.rules, count, 2);
   if (!rules || rules.finished || rules.total < 1) return null;
   const asyks = asyksMatch(st.asyks, count, rules.knocked[0] + rules.knocked[1]);
   return asyks ? { config, state: { asyks, rules } } : null;

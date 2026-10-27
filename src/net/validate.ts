@@ -2,7 +2,7 @@ import type { MatchSyncState } from '../game/engine/GameEngine';
 import { MATCH_LAYOUTS } from '../game/levels/matchLayouts';
 import type { AsykState } from '../game/physics/PhysicsWorld';
 import type { ReplayEvent, ThrowChunk, ThrowEnd, ThrowStart } from '../game/replay/throwRecord';
-import { parseMatchState } from '../game/rules/matchState';
+import { MAX_PLAYERS, MIN_PLAYERS, parseMatchState } from '../game/rules/matchState';
 import type { MatchConfig, Seat } from '../game/types';
 import { cleanName } from '../ui/format';
 import { LIMITS } from './limits';
@@ -39,18 +39,29 @@ function layoutAsykCount(layoutId: string): number {
   return MATCH_LAYOUTS.find((l) => l.id === layoutId)?.asyks.length ?? LIMITS.maxAsyks;
 }
 
+/**
+ * Конфиг матча: 2–4 игрока, кто бросает первым и (онлайн) состав — id клиентов по местам. Имена очищаются,
+ * состав проверяется: формат id, их число равно числу игроков, повторов нет. «Передача устройства» из сети
+ * не принимается — это настройка игры на одном устройстве.
+ */
 export function parseMatchConfig(raw: unknown): MatchConfig | null {
   if (!isObj(raw) || !isKnownLayout(raw.layoutId)) return null;
   const players = raw.players;
-  if (!Array.isArray(players) || players.length !== 2) return null;
-  const first = raw.first;
-  if (first !== 0 && first !== 1) return null;
+  if (!Array.isArray(players) || players.length < MIN_PLAYERS || players.length > MAX_PLAYERS) return null;
+  const first = int(raw.first, 0, players.length - 1);
+  if (first === null) return null;
   const cfg: MatchConfig = {
     layoutId: raw.layoutId,
-    players: [cleanName(players[0], 'Игрок 1'), cleanName(players[1], 'Игрок 2')],
+    players: players.map((p, i) => cleanName(p, `Игрок ${i + 1}`)),
     first: first as Seat,
   };
   if (raw.rematch === true) cfg.rematch = true;
+  if (raw.ids !== undefined) {
+    const ids = raw.ids;
+    if (!Array.isArray(ids) || ids.length !== players.length) return null;
+    if (!ids.every((id) => typeof id === 'string' && CLIENT_ID_RE.test(id)) || new Set(ids).size !== ids.length) return null;
+    cfg.ids = [...(ids as string[])];
+  }
   return cfg;
 }
 
@@ -58,8 +69,11 @@ export function parsePeer(raw: unknown): PeerInfo | null {
   if (!isObj(raw)) return null;
   const { clientId, seat, name } = raw;
   if (typeof clientId !== 'string' || !CLIENT_ID_RE.test(clientId)) return null;
-  if (seat !== 0 && seat !== 1) return null;
-  return { clientId, seat, name: cleanName(name, seat === 0 ? 'Хозяин' : 'Гость') };
+  const s = int(seat, 0, MAX_PLAYERS - 1);
+  if (s === null) return null;
+  const peer: PeerInfo = { clientId, seat: s as Seat, name: cleanName(name, s === 0 ? 'Хозяин' : `Гость ${s}`) };
+  if (raw.busy === true) peer.busy = true;
+  return peer;
 }
 
 export function parseAsykState(raw: unknown): AsykState | null {
@@ -165,18 +179,18 @@ export function parseThrowEnd(raw: unknown): ThrowEnd | null {
   return { steps, final, saka };
 }
 
-function parseSyncState(raw: unknown, layoutId: string): MatchSyncState | null {
+function parseSyncState(raw: unknown, layoutId: string, players: number): MatchSyncState | null {
   if (!isObj(raw)) return null;
   const asyks = parseAsykStates(raw.asyks);
   const total = layoutAsykCount(layoutId);
   if (!asyks || asyks.some((a) => a[0] >= total)) return null;
-  const rules = parseMatchState(raw.rules, total);
+  const rules = parseMatchState(raw.rules, total, players);
   return rules ? { asyks, rules } : null;
 }
 
-/** Проверка снимка, сохранённого в sessionStorage (расстановка известна по id кона). */
-export function parseStoredSyncState(raw: unknown, layoutId: string): MatchSyncState | null {
-  return parseSyncState(raw, layoutId);
+/** Проверка снимка, сохранённого в sessionStorage (расстановка известна по id кона, число игроков — по конфигу). */
+export function parseStoredSyncState(raw: unknown, layoutId: string, players: number): MatchSyncState | null {
+  return parseSyncState(raw, layoutId, players);
 }
 
 /** Разбор одного сообщения. null — сообщение недопустимо и должно быть отброшено. */
@@ -211,8 +225,13 @@ export function parseNetMessage(raw: unknown): NetMessage | null {
       const config = parseMatchConfig(raw.config);
       const matchId = int(raw.matchId, 1, LIMITS.maxMatchId);
       if (!config || matchId === null) return null;
-      const state = parseSyncState(raw.state, config.layoutId);
+      const state = parseSyncState(raw.state, config.layoutId, config.players.length);
       return state ? { t: 'sync', config, matchId, state } : null;
+    }
+    case 'skip': {
+      const seat = int(raw.seat, 0, MAX_PLAYERS - 1);
+      const turnId = int(raw.turnId, 1, 1_000_000);
+      return seat === null || turnId === null ? null : { t: 'skip', seat: seat as Seat, turnId };
     }
     case 'syncRequest':
     case 'rematch':

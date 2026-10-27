@@ -117,3 +117,49 @@ describe('решение о синхронизации', () => {
     expect(decideSync('live', cheat, guestLocal, 1)).toBe('reject');
   });
 });
+
+describe('синхронизация на 3–4 игрока', () => {
+  /** Снимок на `_players` игроков (массивы в opts — уже нужной длины). */
+  function snapN(_players: number, opts: { throws: number[]; knocked: number[]; inZone?: number[]; combo?: number[] }): MatchSyncState {
+    const total = opts.throws.reduce((a, b) => a + b, 0);
+    const inZone = opts.inZone ?? Array.from({ length: 16 }, (_, k) => k);
+    return {
+      asyks: Array.from({ length: 16 }, (_, i) => [i, 100 + i * 40, 400, 0, inZone.includes(i) ? 1 : 0] as MatchSyncState['asyks'][number]),
+      rules: { current: 0, turnId: 1, knocked: opts.knocked, throws: opts.throws, bestCombo: opts.combo ?? opts.knocked.map((k) => Math.min(k, 1)), total, finished: false },
+    };
+  }
+  const all16 = Array.from({ length: 16 }, (_, k) => k);
+  const minus = (...ids: number[]) => all16.filter((i) => !ids.includes(i));
+  // я — место 0; сделано по 2 броска, у каждого выбито по одному
+  const local4 = factsOf(snapN(4, { throws: [2, 2, 2, 2], knocked: [1, 1, 1, 1], inZone: minus(0, 1, 2, 3) }), 4);
+
+  it('пока я жду своего хода, каждый из троих сделал по броску — принимаем', () => {
+    const honest = factsOf(snapN(4, { throws: [2, 3, 3, 3], knocked: [1, 2, 1, 3], inZone: minus(0, 1, 2, 3, 4, 5, 6) }), 4);
+    expect(decideSync('live', honest, local4, 0)).toBe('apply');
+  });
+
+  it('пропущенный ход (бросок мимо без выбитых) — принимаем', () => {
+    const skipped = factsOf(snapN(4, { throws: [2, 3, 2, 2], knocked: [1, 1, 1, 1], inZone: minus(0, 1, 2, 3) }), 4);
+    expect(decideSync('live', skipped, local4, 0)).toBe('apply');
+  });
+
+  it('кто-то «бросил» дважды подряд, или впереди больше бросков, чем остальных игроков, — отказ', () => {
+    expect(decideSync('live', factsOf(snapN(4, { throws: [2, 4, 2, 2], knocked: [1, 2, 1, 1], inZone: minus(0, 1, 2, 3, 4) }), 4), local4, 0)).toBe('reject');
+    expect(decideSync('live', factsOf(snapN(4, { throws: [3, 3, 3, 3], knocked: [1, 1, 1, 1] }), 4), local4, 0)).toBe('reject'); // мой бросок, которого не было
+  });
+
+  it('мои очки и комбо при четверых тоже неприкосновенны', () => {
+    expect(decideSync('live', factsOf(snapN(4, { throws: [2, 3, 2, 2], knocked: [2, 1, 1, 1], inZone: minus(0, 1, 2, 3, 4) }), 4), local4, 0)).toBe('reject');
+  });
+
+  it('у троих: впереди может быть не больше двух бросков', () => {
+    const local3 = factsOf(snapN(3, { throws: [1, 1, 1], knocked: [0, 0, 0] }), 3);
+    expect(decideSync('live', factsOf(snapN(3, { throws: [1, 2, 2], knocked: [0, 1, 0], inZone: minus(0) }), 3), local3, 0)).toBe('apply');
+    expect(decideSync('live', factsOf(snapN(3, { throws: [1, 2, 2], knocked: [0, 9, 0], inZone: minus(0) }), 3), local3, 0)).toBe('reject'); // закон сохранения
+  });
+
+  it('снимок не на то число игроков — отказ', () => {
+    const wrong = factsOf(snapN(4, { throws: [2, 2, 2, 2], knocked: [1, 1, 1, 1], inZone: minus(0, 1, 2, 3) }), 3);
+    expect(decideSync('live', { ...wrong, throws: [...wrong.throws, 0, 0] }, local4, 0)).toBe('reject');
+  });
+});

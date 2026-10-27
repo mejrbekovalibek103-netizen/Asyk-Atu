@@ -1,9 +1,23 @@
-import { MATCH_MAX_THROWS, PLAYER_STYLE } from '../../game/rules/MatchRules';
+import { PLAYER_STYLE } from '../../game/rules/MatchRules';
 import type { MatchResult, Seat } from '../../game/types';
 import { AsykIcon } from '../components/AsykIcon';
 import { Modal } from '../components/Modal';
 import { Ornament } from '../components/Ornament';
 import { plural } from '../format';
+
+/** Онлайн: готовность к реваншу. Хозяин начинает реванш, когда готовы все игроки, которые ещё в комнате. */
+export interface OnlineRematch {
+  /** Я уже нажал «Реванш». */
+  ready: boolean;
+  /** Кто из остальных уже готов. */
+  readyNames: string[];
+  /** Кого ещё ждём (в комнате, но не нажали). */
+  waitingNames: string[];
+  /** Кто вышел из матча или не в сети. */
+  goneNames: string[];
+  /** Реванш вообще возможен: в комнате остался хотя бы один соперник. */
+  possible: boolean;
+}
 
 interface Props {
   result: MatchResult;
@@ -11,14 +25,36 @@ interface Props {
   onRematch: () => void;
   onNewMatch: () => void;
   onHome: () => void;
-  /** Онлайн: реванш требует согласия обоих. */
-  online?: { rematch: 'idle' | 'sent' | 'received'; opponent: string; opponentLeft: boolean };
+  online?: OnlineRematch;
   newMatchLabel?: string;
 }
 
+const names = (list: string[]) => (list.length <= 1 ? (list[0] ?? '') : `${list.slice(0, -1).join(', ')} и ${list[list.length - 1]}`);
+
 export function MatchResultOverlay({ result: r, layoutName, onRematch, onNewMatch, onHome, online, newMatchLabel = 'Новый матч' }: Props) {
-  const title = r.winner === null ? 'Ничья!' : `Победа: ${r.players[r.winner].name}!`;
-  const reason = r.reason === 'cleared' ? 'Кон пуст — все асыки выбиты.' : `У обоих закончились броски (по ${MATCH_MAX_THROWS / 2}).`;
+  const n = r.players.length;
+  const winnerNames = r.winners.map((s) => r.players[s].name);
+  const title =
+    r.winners.length === 1 ? `Победа: ${winnerNames[0]}!` : r.winners.length === n ? 'Ничья!' : `Ничья: ${names(winnerNames)}`;
+  const reason =
+    r.reason === 'cleared'
+      ? 'Кон пуст — все асыки выбиты.'
+      : `${n === 2 ? 'У обоих' : 'У всех'} закончились броски (по ${r.throwsPerPlayer}).`;
+  // при трёх-четырёх игроках — места по числу выбитых асыков (при равенстве — по месту за столом)
+  const order = r.players.map((_, i) => i as Seat).sort((a, b) => r.players[b].knocked - r.players[a].knocked || a - b);
+  const placeOf = (seat: Seat) => 1 + r.players.filter((p) => p.knocked > r.players[seat].knocked).length;
+
+  const othersReady = (online?.readyNames.length ?? 0) > 0;
+  const rematchLabel = !online
+    ? 'Реванш'
+    : online.ready
+      ? online.waitingNames.length
+        ? 'Ждём остальных…'
+        : 'Начинаем…'
+      : othersReady
+        ? 'Принять реванш'
+        : 'Предложить реванш';
+
   return (
     <Modal labelledBy="match-result-title" className="modal--result">
       <Ornament className="modal__ornament" />
@@ -27,10 +63,10 @@ export function MatchResultOverlay({ result: r, layoutName, onRematch, onNewMatc
         {title}
       </h2>
       <p className="modal__text">{reason}</p>
-      <div className="match-score">
-        {([0, 1] as Seat[]).map((seat) => {
+      <div className={`match-score match-score--${n}`}>
+        {(n > 2 ? order : r.players.map((_, i) => i as Seat)).map((seat) => {
           const p = r.players[seat];
-          const won = r.winner === seat;
+          const won = r.winners.includes(seat);
           return (
             <div
               key={seat}
@@ -40,6 +76,7 @@ export function MatchResultOverlay({ result: r, layoutName, onRematch, onNewMatc
               <span className="match-score__crown" aria-hidden="true">
                 {won ? '🏆' : ''}
               </span>
+              {n > 2 && <span className="match-score__place">{placeOf(seat)} место</span>}
               <AsykIcon palette={PLAYER_STYLE[seat].palette} size={28} />
               <span className="match-score__name">{p.name}</span>
               <span className="match-score__knocked">{p.knocked}</span>
@@ -52,24 +89,24 @@ export function MatchResultOverlay({ result: r, layoutName, onRematch, onNewMatc
           );
         })}
       </div>
-      {online?.rematch === 'received' && !online.opponentLeft && (
+      {online && othersReady && !online.ready && (
         <p className="result-tip" role="status">
-          {online.opponent} предлагает реванш
+          {names(online.readyNames)} {online.readyNames.length === 1 ? 'предлагает' : 'предлагают'} реванш
         </p>
       )}
-      {online?.opponentLeft && (
+      {online && online.ready && online.waitingNames.length > 0 && (
         <p className="result-tip" role="status">
-          {online.opponent} вышел из матча
+          Ждём: {names(online.waitingNames)}
+        </p>
+      )}
+      {online && online.goneNames.length > 0 && (
+        <p className="result-tip" role="status">
+          {names(online.goneNames)} {online.goneNames.length === 1 ? 'вышел' : 'вышли'} из матча
         </p>
       )}
       <div className="result-actions">
-        <button
-          className="btn btn--primary"
-          onClick={onRematch}
-          data-autofocus
-          disabled={online && (online.rematch === 'sent' || online.opponentLeft)}
-        >
-          {!online ? 'Реванш' : online.rematch === 'received' ? 'Принять реванш' : online.rematch === 'sent' ? 'Ждём ответ соперника…' : 'Предложить реванш'}
+        <button className="btn btn--primary" onClick={onRematch} data-autofocus disabled={online && (online.ready || !online.possible)}>
+          {rematchLabel}
         </button>
         <button className="btn" onClick={onNewMatch}>
           {newMatchLabel}

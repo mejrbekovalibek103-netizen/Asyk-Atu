@@ -54,7 +54,7 @@ describe('сессия комнаты в sessionStorage', () => {
   });
 
   it('подделка не принимается: неверный id, место, не JSON, не объект', () => {
-    for (const raw of ['не json', 'null', '[]', '5', '"x"', JSON.stringify({ ...good(), clientId: '../../x' }), JSON.stringify({ ...good(), seat: 2 }), JSON.stringify({ ...good(), clientId: 5 })]) {
+    for (const raw of ['не json', 'null', '[]', '5', '"x"', JSON.stringify({ ...good(), clientId: '../../x' }), JSON.stringify({ ...good(), seat: 4 }), JSON.stringify({ ...good(), seat: -1 }), JSON.stringify({ ...good(), seat: 1.5 }), JSON.stringify({ ...good(), clientId: 5 })]) {
       store.raw.set(KEY, raw);
       expect(loadRoomSession(CODE), raw.slice(0, 40)).toBeNull();
     }

@@ -6,7 +6,10 @@ import { aimFromAnglePower, throwParams } from '../physics/aim';
 import { PhysicsWorld, type Piece } from '../physics/PhysicsWorld';
 import { Effects } from '../render/effects';
 import type { MatchConfig, MatchResult } from '../types';
-import { MATCH_MAX_THROWS, MatchRules } from './MatchRules';
+import { matchThrowLimit, MatchRules } from './MatchRules';
+import { parseMatchState } from './matchState';
+
+const MATCH_MAX_THROWS = matchThrowLimit(2);
 import type { RulesHost } from './Rules';
 
 const layout = getMatchLayout('ulken-kon');
@@ -178,7 +181,7 @@ describe('MatchRules: конец матча', () => {
     expect(r.reason).toBe('cleared');
     expect(r.players[0].knocked + r.players[1].knocked).toBe(n);
     expect(r.players[1].knocked).toBeGreaterThan(r.players[0].knocked);
-    expect(r.winner).toBe(1);
+    expect(r.winners).toEqual([1]);
   });
 
   it('ничья при равном счёте', () => {
@@ -186,7 +189,7 @@ describe('MatchRules: конец матча', () => {
     left.n = 2;
     play(1);
     play(2);
-    expect(result()!.winner).toBeNull();
+    expect(result()!.winners).toEqual([0, 1]); // ничья: победителей двое
   });
 
   it('лимит бросков завершает матч', () => {
@@ -266,5 +269,125 @@ describe('матч целиком на настоящей физике', () => {
     expect(r.players[0].knocked + r.players[1].knocked).toBe(knocked);
     if (r.reason === 'cleared') expect(knocked).toBe(layout.asyks.length);
     expect(r.totalThrows).toBeLessThanOrEqual(MATCH_MAX_THROWS);
+  });
+});
+
+
+describe('MatchRules: трое и четверо (онлайн)', () => {
+  const big = getMatchLayout('korgan'); // 16 асыков
+  function setupN(names: string[], first: 0 | 1 | 2 | 3 = 0) {
+    const left = { n: big.asyks.length };
+    let result: MatchResult | null = null;
+    const said: string[] = [];
+    const host: RulesHost = { ...fakeHost(left), layout: big, say: (t) => void said.push(t) };
+    const rules = new MatchRules({ layoutId: big.id, players: names, first }, (r) => (result = r), null);
+    rules.attach(host);
+    const play = (...ids: number[]) => {
+      rules.onLaunch();
+      for (const id of ids) {
+        rules.onKnockout(piece(id));
+        left.n -= 1;
+      }
+      rules.onSettled();
+      const step = rules.next();
+      if (step.kind === 'finish') rules.onFinish();
+      return step;
+    };
+    return { rules, left, play, said, result: () => result };
+  }
+
+  it('ход идёт по кругу: 2 → 3 → 0 → 1 …', () => {
+    const { rules, play } = setupN(['А', 'Б', 'В', 'Г'], 2);
+    const order: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      order.push(rules.hud().current);
+      play();
+    }
+    expect(order).toEqual([2, 3, 0, 1, 2, 3]);
+  });
+
+  it('по 10 бросков на каждого: у троих 30, у четверых 40', () => {
+    for (const names of [['А', 'Б', 'В'], ['А', 'Б', 'В', 'Г']]) {
+      const { rules, play, result } = setupN(names);
+      expect(rules.hud()).toMatchObject({ maxThrows: names.length * 10, throwsPerPlayer: 10 });
+      let count = 0;
+      let step = play();
+      count++;
+      while (step.kind !== 'finish') {
+        step = play();
+        count++;
+      }
+      expect(count).toBe(names.length * 10);
+      expect(result()!.players.every((p) => p.throws === 10)).toBe(true);
+      expect(result()!.reason).toBe('limit');
+    }
+  });
+
+  it('победители: один или несколько при равенстве', () => {
+    const a = setupN(['А', 'Б', 'В']);
+    a.play(1, 2); // А: 2
+    a.play(3); // Б: 1
+    a.play(4, 5); // В: 2
+    a.left.n = 0;
+    a.play();
+    expect(a.result()!.winners).toEqual([0, 2]);
+    const b = setupN(['А', 'Б', 'В', 'Г']);
+    b.play();
+    b.play(1, 2, 3);
+    b.left.n = 0;
+    b.play();
+    expect(b.result()!.winners).toEqual([1]);
+  });
+
+  it('пропуск хода отсутствующего: засчитывается как бросок мимо, только для текущего хода', () => {
+    const { rules, said } = setupN(['А', 'Б', 'В']);
+    const { current } = rules.hud();
+    const throwNo = rules.hud().totalThrows + 1; // номер броска — одинаков у всех игроков
+    expect(rules.skipTurn((current + 1) as 1, throwNo)).toBe(false); // не его ход
+    expect(rules.skipTurn(current, throwNo + 1)).toBe(false); // чужой номер броска
+    expect(rules.skipTurn(current, throwNo)).toBe(true);
+    expect(rules.hud().players[current].throws).toBe(1);
+    expect(rules.hud().totalThrows).toBe(1);
+    expect(said.at(-1)).toContain('ход пропущен');
+    expect(rules.next().kind).toBe('continue');
+    expect(rules.hud().current).toBe(1);
+    expect(rules.skipTurn(0, throwNo)).toBe(false); // повторный пропуск того же хода ничего не меняет
+  });
+
+  it('у двоих пропусков не бывает (ждём возвращения соперника)', () => {
+    const { rules } = setup(0, 1);
+    expect(rules.skipTurn(0, rules.hud().totalThrows + 1)).toBe(false);
+  });
+
+  it('состояние на четверых экспортируется и принимается целиком', () => {
+    const a = setupN(['А', 'Б', 'В', 'Г'], 1);
+    a.play(1);
+    a.play();
+    a.play(2, 3);
+    const st = a.rules.exportState();
+    expect(st.throws).toEqual([0, 1, 1, 1]);
+    const b = setupN(['А', 'Б', 'В', 'Г'], 1);
+    b.rules.importState(JSON.parse(JSON.stringify(st)));
+    expect(b.rules.hud()).toMatchObject({ current: 0, totalThrows: 3 });
+    expect(b.rules.hud().players.map((p) => p.knocked)).toEqual([0, 1, 0, 2]);
+  });
+});
+
+describe('parseMatchState: состояние на 2–4 игрока', () => {
+  const ok4 = { current: 2, turnId: 5, knocked: [1, 0, 2, 0], throws: [1, 1, 1, 1], bestCombo: [1, 0, 2, 0], total: 4, finished: false };
+
+  it('честное состояние читается для своего числа игроков, лишние поля отбрасываются', () => {
+    expect(parseMatchState({ ...ok4, evil: 1 }, 16, 4)).toEqual(ok4);
+    expect(parseMatchState(ok4, 16, 3)).toBeNull(); // массивы на четверых, а игроков трое
+    expect(parseMatchState(ok4, 16, 5)).toBeNull();
+    expect(parseMatchState(ok4, 16, 1)).toBeNull();
+  });
+
+  it('противоречия: броски не по кругу, сумма не сходится, место вне стола, лимит превышен', () => {
+    expect(parseMatchState({ ...ok4, throws: [2, 0, 1, 1] }, 16, 4)).toBeNull(); // разница больше одного броска
+    expect(parseMatchState({ ...ok4, total: 5 }, 16, 4)).toBeNull();
+    expect(parseMatchState({ ...ok4, current: 4 }, 16, 4)).toBeNull();
+    expect(parseMatchState({ ...ok4, throws: [11, 11, 11, 11], total: 44 }, 16, 4)).toBeNull(); // больше 10 на каждого
+    expect(parseMatchState({ ...ok4, knocked: [9, 0, 9, 0], bestCombo: [1, 0, 2, 0] }, 16, 4)).toBeNull(); // выбито больше асыков, чем есть
   });
 });

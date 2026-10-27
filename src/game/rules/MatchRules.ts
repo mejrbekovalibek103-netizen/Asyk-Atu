@@ -4,15 +4,17 @@ import type { Piece } from '../physics/PhysicsWorld';
 import type { AsykPalette } from '../render/asykShape';
 import type { MatchConfig, MatchHud, MatchResult, Seat } from '../types';
 import { plural } from '../../ui/format';
-import { MATCH_MAX_THROWS, parseMatchState, type MatchState } from './matchState';
+import { matchThrowLimit, parseMatchState, throwsPerPlayer, type MatchState } from './matchState';
 import type { NextStep, Rules, RulesHost } from './Rules';
 
-export { MATCH_MAX_THROWS };
+export { matchThrowLimit, throwsPerPlayer };
 
-/** Оформление игроков: у каждого свой крашеный сақа и браслет. */
-export const PLAYER_STYLE: readonly [PlayerStyle, PlayerStyle] = [
+/** Оформление игроков: у каждого свой крашеный сақа и браслет (до четырёх игроков за «столом»). */
+export const PLAYER_STYLE: readonly PlayerStyle[] = [
   { palette: 'saka', bracelet: '#c8372d', color: '#e0553a' },
   { palette: 'saka2', bracelet: '#6b3fc4', color: '#8b5cf6' },
+  { palette: 'saka3', bracelet: '#1f7a45', color: '#2f9e5f' },
+  { palette: 'saka4', bracelet: '#a87600', color: '#d99a00' },
 ];
 
 interface PlayerStyle {
@@ -22,32 +24,32 @@ interface PlayerStyle {
   color: string;
 }
 
-const other = (s: Seat): Seat => (s === 0 ? 1 : 0);
-
 export type { MatchState };
 
 /**
- * Матч вдвоём:
- * - кон общий, игроки бросают строго по очереди — один бросок, и ход переходит;
+ * Матч на 2–4 игрока:
+ * - кон общий, игроки бросают строго по очереди по кругу — один бросок, и ход переходит к следующему;
  * - матч идёт, пока кон не опустеет (или пока не кончится лимит бросков — поровну на каждого);
- * - побеждает тот, кто выбил больше асыков.
+ * - побеждает тот, кто выбил больше асыков (при равенстве — несколько победителей, ничья).
  *
- * `localSeat` — для онлайн-режима: какой игрок управляет этим экраном (null — оба, одно устройство).
+ * `localSeat` — для онлайн-режима: какой игрок управляет этим экраном (null — все на одном устройстве).
  */
 export class MatchRules implements Rules {
   private host!: RulesHost;
+  /** Число игроков. */
+  private readonly n: number;
   private current: Seat;
   private turnId = 1;
-  private knocked: [number, number] = [0, 0];
-  private throws: [number, number] = [0, 0];
-  private bestCombo: [number, number] = [0, 0];
+  private knocked: number[];
+  private throws: number[];
+  private bestCombo: number[];
   private total = 0;
   private thisThrow = 0;
   private readonly knockedIds = new Set<number>();
   private reason: MatchResult['reason'] = 'cleared';
   private finished = false;
   private started = false;
-  /** Передача устройства нужна только при игре вдвоём на одном экране. */
+  /** Передача устройства нужна только при игре на одном экране. */
   private readonly handoffEnabled: boolean;
   /** Ждём, пока следующий игрок нажмёт «Готов»: до этого бросок невозможен. */
   private handoffPending: boolean;
@@ -57,7 +59,11 @@ export class MatchRules implements Rules {
     private readonly onComplete: (r: MatchResult) => void,
     private readonly localSeat: Seat | null = null,
   ) {
+    this.n = config.players.length;
     this.current = config.first;
+    this.knocked = new Array<number>(this.n).fill(0);
+    this.throws = new Array<number>(this.n).fill(0);
+    this.bestCombo = new Array<number>(this.n).fill(0);
     this.handoffEnabled = !!config.handoff && localSeat === null;
     this.handoffPending = this.handoffEnabled;
   }
@@ -68,6 +74,15 @@ export class MatchRules implements Rules {
 
   private name(s: Seat): string {
     return this.config.players[s];
+  }
+
+  /** Следующий по кругу. */
+  private after(s: Seat): Seat {
+    return ((s + 1) % this.n) as Seat;
+  }
+
+  private get limit(): number {
+    return matchThrowLimit(this.n);
   }
 
   onStart(): void {
@@ -124,14 +139,15 @@ export class MatchRules implements Rules {
       this.host.effects.popup(c.x, c.y - 40, `КОМБО ×${n}`, '#ffb13b', 40, 1500);
       sound.bonus();
     }
+    const nextName = this.name(this.after(me));
     if (left === 0) {
       this.host.say(`${this.name(me)}: +${n} — кон пуст!`, 'good');
-    } else if (this.total >= MATCH_MAX_THROWS) {
+    } else if (this.total >= this.limit) {
       this.host.say('Броски закончились', 'info');
     } else if (n > 0) {
-      this.host.say(`${this.name(me)}: +${n} ${plural(n, ['асык', 'асыка', 'асыков'])}! Ход: ${this.name(other(me))}`, 'good', 1600);
+      this.host.say(`${this.name(me)}: +${n} ${plural(n, ['асык', 'асыка', 'асыков'])}! Ход: ${nextName}`, 'good', 1600);
     } else {
-      this.host.say(`Мимо! Ход: ${this.name(other(me))}`, 'warn', 1600);
+      this.host.say(`Мимо! Ход: ${nextName}`, 'warn', 1600);
       sound.miss();
     }
   }
@@ -141,32 +157,48 @@ export class MatchRules implements Rules {
       this.reason = 'cleared';
       return { kind: 'finish' };
     }
-    if (this.total >= MATCH_MAX_THROWS) {
+    if (this.total >= this.limit) {
       this.reason = 'limit';
       return { kind: 'finish' };
     }
-    // строго по очереди: после каждого броска ход переходит
-    this.current = other(this.current);
+    // строго по очереди: после каждого броска ход переходит к следующему по кругу
+    this.current = this.after(this.current);
     this.turnId += 1;
     this.handoffPending = this.handoffEnabled;
     return { kind: 'continue' };
   }
 
+  /**
+   * Онлайн, 3–4 игрока: ход игрока, который не в сети, пропускается и засчитывается как бросок мимо
+   * (иначе остальные ждали бы его бесконечно). Ход определяется номером броска `throwNo` (сделано бросков + 1):
+   * он одинаков у всех игроков, поэтому повторный или запоздалый пропуск ничего не меняет.
+   * Дальше движок вызывает `next()`, как после броска.
+   */
+  skipTurn(seat: Seat, throwNo: number): boolean {
+    if (this.finished || this.n < 3 || seat !== this.current || throwNo !== this.total + 1) return false;
+    this.total += 1;
+    this.throws[seat] += 1;
+    this.thisThrow = 0;
+    this.host.say(`${this.name(seat)} не в сети — ход пропущен`, 'warn', 1800);
+    return true;
+  }
+
   onFinish(): void {
     if (this.finished) return;
     this.finished = true;
-    const [a, b] = this.knocked;
-    const winner: Seat | null = a === b ? null : a > b ? 0 : 1;
+    const best = Math.max(...this.knocked);
+    const winners = this.knocked.flatMap((k, i) => (k === best ? [i as Seat] : []));
     const result: MatchResult = {
       layoutId: this.host.layout.id,
-      players: [0, 1].map((i) => ({
-        name: this.config.players[i],
+      players: this.config.players.map((name, i) => ({
+        name,
         knocked: this.knocked[i],
         throws: this.throws[i],
         bestCombo: this.bestCombo[i],
-      })) as MatchResult['players'],
-      winner,
+      })),
+      winners,
       totalThrows: this.total,
+      throwsPerPlayer: throwsPerPlayer(this.n),
       reason: this.reason,
     };
     sound.roundEnd(true);
@@ -176,9 +208,9 @@ export class MatchRules implements Rules {
   reset(): void {
     this.current = this.config.first;
     this.turnId += 1;
-    this.knocked = [0, 0];
-    this.throws = [0, 0];
-    this.bestCombo = [0, 0];
+    this.knocked.fill(0);
+    this.throws.fill(0);
+    this.bestCombo.fill(0);
     this.total = 0;
     this.thisThrow = 0;
     this.knockedIds.clear();
@@ -190,14 +222,12 @@ export class MatchRules implements Rules {
   hud(): MatchHud {
     return {
       kind: 'match',
-      players: [
-        { name: this.config.players[0], knocked: this.knocked[0], throws: this.throws[0] },
-        { name: this.config.players[1], knocked: this.knocked[1], throws: this.throws[1] },
-      ],
+      players: this.config.players.map((name, i) => ({ name, knocked: this.knocked[i], throws: this.throws[i] })),
       current: this.current,
       turnId: this.turnId,
       totalThrows: this.total,
-      maxThrows: MATCH_MAX_THROWS,
+      maxThrows: this.limit,
+      throwsPerPlayer: throwsPerPlayer(this.n),
       asyksLeft: this.host.asyksLeft(),
       totalAsyks: this.host.layout.asyks.length,
       localSeat: this.localSeat,
@@ -220,7 +250,7 @@ export class MatchRules implements Rules {
 
   /** Принимает только проверенное состояние: данные приходят из сети и из хранилища браузера. */
   importState(raw: unknown): void {
-    const st = parseMatchState(raw, this.host.layout.asyks.length);
+    const st = parseMatchState(raw, this.host.layout.asyks.length, this.n);
     if (!st) return;
     this.current = st.current;
     this.turnId = Math.max(this.turnId, st.turnId) + 1;

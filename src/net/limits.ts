@@ -1,5 +1,5 @@
 import { REPLAY_CAPS } from '../game/replay/throwRecord';
-import { MATCH_MAX_THROWS } from '../game/rules/matchState';
+import { MAX_MATCH_THROWS } from '../game/rules/matchState';
 
 /**
  * Жёсткие пределы для всего, что приходит по сети. Каждое число выведено из реальных значений игры
@@ -11,7 +11,7 @@ export const LIMITS = {
   /** Асыков в расстановке не больше (в играх до 16). */
   maxAsyks: 32,
   /** Бросков в матче. */
-  maxThrows: MATCH_MAX_THROWS,
+  maxThrows: MAX_MATCH_THROWS,
   /** Частей записи одного броска: 9 с × 4 части/с = 36, с запасом. */
   maxChunksPerThrow: 100,
   /** Кадров в одной части: настоящая — до 10 (30 шагов / каждый 3-й). */
@@ -73,6 +73,7 @@ export const RATES: Record<string, readonly [number, number]> = {
   start: [2, 3],
   sync: [2, 3],
   syncRequest: [2, 3],
+  skip: [1, 3],
   rematch: [2, 3],
   rematchAccept: [2, 3],
   leave: [2, 3],

@@ -1,7 +1,7 @@
 import type { Piece } from '../physics/PhysicsWorld';
 import type { AsykPalette } from '../render/asykShape';
 import type { Effects } from '../render/effects';
-import type { HudMessage, KonLayout, ModeHud, Vec2 } from '../types';
+import type { HudMessage, KonLayout, ModeHud, Seat, Vec2 } from '../types';
 
 /** Что движок предоставляет правилам. */
 export interface RulesHost {
@@ -70,6 +70,12 @@ export interface Rules {
    * (правила в `next()` отвечают `finish`).
    */
   timeIsUp?(): boolean;
+  /**
+   * Онлайн, 3–4 игрока: пропустить ход игрока, который не в сети (засчитывается как бросок мимо).
+   * `throwNo` — номер броска (сделано бросков + 1), одинаковый у всех игроков.
+   * true — пропуск принят (это действительно текущий ход), движок дальше вызывает `next()`.
+   */
+  skipTurn?(seat: Seat, throwNo: number): boolean;
   /** Состояние счёта для синхронизации онлайн-матча (после переподключения). */
   exportState?(): unknown;
   importState?(state: unknown): void;
