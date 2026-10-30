@@ -45,6 +45,14 @@ export function resolveSeats(prev: readonly (string | null)[], peers: readonly P
   return out;
 }
 
+/**
+ * Кто за столом ещё не вернулся в комнату ожидания: смотрит итоги или всё ещё в матче.
+ * Хозяин начинает следующий матч, только когда таких нет (ждём всех; кто ушёл из комнаты — место освободил).
+ */
+export function awayFromLobby(seats: readonly (PeerInfo | null)[]): PeerInfo[] {
+  return seats.filter((p): p is PeerInfo => !!p && (!!p.busy || !!p.results));
+}
+
 /** Сколько игроков сейчас в комнате (я + занятые места). */
 export function seatedCount(seats: readonly (PeerInfo | null)[], mySeat: Seat | null): number {
   return seats.filter(Boolean).length + (mySeat !== null ? 1 : 0);

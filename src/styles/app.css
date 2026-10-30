@@ -1847,6 +1847,12 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.lobby-slot__note {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
 .lobby-slot__tag {
   flex: none;
   padding: 3px 8px;
@@ -1933,6 +1939,14 @@ button {
 .lobby-layout small {
   font-weight: 700;
   color: var(--muted);
+}
+.lobby-pick {
+  display: grid;
+  gap: 12px;
+}
+.lobby-pick h2 {
+  margin: 0;
+  font-size: 18px;
 }
 .dots::after {
   content: '';

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PeerInfo } from './protocol';
-import { mustYieldSeat, pickFreeSeat, resolveSeats, seatedCount } from './seats';
+import { awayFromLobby, mustYieldSeat, pickFreeSeat, resolveSeats, seatedCount } from './seats';
 
 const peer = (clientId: string, seat: 0 | 1 | 2 | 3, name = clientId): PeerInfo => ({ clientId, seat, name });
 const A = 'aaaaaaaaaaaaaaaa';
@@ -47,5 +47,13 @@ describe('рассадка в комнате (2–4 игрока)', () => {
     expect(seatedCount([peer(A, 0), null, peer(B, 2), null], 1)).toBe(3);
     expect(seatedCount([null, null, null, null], 0)).toBe(1);
     expect(seatedCount([null, null, null, null], null)).toBe(0);
+  });
+
+  it('кто не вернулся в комнату ожидания: смотрит итоги или ещё в матче; ушедший место освободил', () => {
+    const inResults = { ...peer(B, 1), results: true };
+    const inMatch = { ...peer(C, 2), busy: true };
+    expect(awayFromLobby([null, inResults, inMatch, peer(LOW, 3)])).toEqual([inResults, inMatch]);
+    expect(awayFromLobby([null, peer(B, 1), null, null])).toEqual([]);
+    expect(awayFromLobby([null, null, null, null])).toEqual([]);
   });
 });

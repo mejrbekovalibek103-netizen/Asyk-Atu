@@ -3,7 +3,7 @@ import { MAX_PLAYERS } from '../game/rules/matchState';
 import type { Seat } from '../game/types';
 import { SUPABASE_KEY, SUPABASE_URL } from './config';
 import { LIMITS, RATES, RateLimiter, StrikeCounter } from './limits';
-import { CLIENT_ID_RE, type Envelope, type NetMessage, type PeerInfo } from './protocol';
+import { CLIENT_ID_RE, type Envelope, type NetMessage, type PeerInfo, type RoomStage } from './protocol';
 import { mustYieldSeat, pickFreeSeat, resolveSeats } from './seats';
 import { parseEnvelope, parsePeer } from './validate';
 
@@ -11,7 +11,8 @@ import { parseEnvelope, parsePeer } from './validate';
  * Комната онлайн-матча поверх Supabase Realtime (2–4 игрока).
  *
  * - broadcast — сообщения игроков (прицел, запись броска, синхронизация);
- * - presence — кто сейчас в комнате (имя, место за «столом», идёт ли у него матч).
+ * - presence — кто сейчас в комнате (имя, место за «столом», где он: в комнате ожидания, в матче или в итогах;
+ *   у хозяина — кон следующего матча).
  * Базы данных и таблиц нет: сервер только пересылает сообщения.
  *
  * Всё входящее проходит «таможню» (см. `handleBroadcast`): размер → разбор и проверка → отправитель известен
@@ -92,7 +93,7 @@ interface SenderGuard {
 
 export class Room {
   private channel: RealtimeChannel | null = null;
-  private me: { clientId: string; seat: Seat | null; name: string; busy: boolean };
+  private me: { clientId: string; seat: Seat | null; name: string; stage: RoomStage; layoutId: string | null };
   private snapshot: RoomSnapshot;
   private readonly messageHandlers = new Set<(msg: NetMessage, ctx: MessageContext) => void>();
   private readonly listeners = new Set<() => void>();
@@ -111,7 +112,7 @@ export class Room {
     me: { clientId: string; seat: Seat | null; name: string },
     private readonly onDisposed?: () => void,
   ) {
-    this.me = { ...me, busy: false };
+    this.me = { ...me, stage: 'lobby', layoutId: null };
     this.snapshot = { status: 'connecting', seat: me.seat, peers: [], seats: Array.from({ length: MAX_PLAYERS }, () => null), bad: [], intruders: 0 };
   }
 
@@ -234,7 +235,9 @@ export class Room {
     const ch = this.channel;
     if (!ch || this.me.seat === null) return;
     const payload: PeerInfo = { clientId: this.me.clientId, seat: this.me.seat, name: this.me.name };
-    if (this.me.busy) payload.busy = true;
+    if (this.me.stage === 'match') payload.busy = true;
+    if (this.me.stage === 'results') payload.results = true;
+    if (this.me.layoutId) payload.layoutId = this.me.layoutId;
     void ch.track(payload);
   }
 
@@ -344,10 +347,20 @@ export class Room {
     this.flushPending();
   }
 
-  /** Идёт ли у меня матч (виден остальным: новичок не займёт место посреди матча). */
-  setBusy(busy: boolean): void {
-    if (this.me.busy === busy) return;
-    this.me = { ...this.me, busy };
+  /**
+   * Где я: в комнате ожидания, в матче или в итогах. Виден остальным: новичок не займёт место посреди матча,
+   * а хозяин не начнёт следующий матч, пока кто-то ещё смотрит итоги.
+   */
+  setStage(stage: RoomStage): void {
+    if (this.me.stage === stage) return;
+    this.me = { ...this.me, stage };
+    if (this.tracked) this.track();
+  }
+
+  /** Кон следующего матча (сообщает хозяин): гости видят его в комнате ожидания. */
+  setLayout(layoutId: string | null): void {
+    if (this.me.layoutId === layoutId) return;
+    this.me = { ...this.me, layoutId };
     if (this.tracked) this.track();
   }
 

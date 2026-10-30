@@ -4,8 +4,7 @@ import { formatRoomCode } from '../../net/protocol';
 import { AsykIcon } from '../components/AsykIcon';
 
 /**
- * Части комнаты ожидания (лобби): код комнаты и список мест за столом.
- * Список мест рассчитан на любое число игроков — сейчас в комнате двое.
+ * Части комнаты ожидания (лобби): код комнаты и список мест за столом (до четырёх игроков).
  */
 
 /** Одно место за столом. `name` — null, если место свободно (или игрок не в сети). */
@@ -16,6 +15,8 @@ export interface LobbySlot {
   host: boolean;
   /** Будущее место в матче (порядок занятых мест) — от него цвет сақа; нет — место свободно. */
   order?: number;
+  /** Где игрок сейчас, если не в комнате ожидания: «смотрит итоги», «в матче». */
+  note?: string;
 }
 
 export function PlayerSlots({ slots }: { slots: LobbySlot[] }) {
@@ -26,7 +27,10 @@ export function PlayerSlots({ slots }: { slots: LobbySlot[] }) {
         return (
           <li key={s.seat} className={`lobby-slot${s.name ? ' lobby-slot--on' : ' lobby-slot--empty'}`} style={{ '--player': style?.color ?? '#9aa0a6' } as React.CSSProperties}>
             <AsykIcon palette={style?.palette ?? 'saka'} size={28} ghost={!s.name} />
-            <span className="lobby-slot__name">{s.name ?? (s.host ? 'Хозяин не в сети' : 'Свободное место')}</span>
+            <span className="lobby-slot__name">
+              {s.name ?? (s.host ? 'Хозяин не в сети' : 'Свободное место')}
+              {s.note && <small className="lobby-slot__note">{s.note}</small>}
+            </span>
             {s.host && <span className="lobby-slot__tag">хозяин</span>}
             {s.you && <span className="lobby-slot__tag lobby-slot__tag--you">вы</span>}
           </li>

@@ -207,6 +207,25 @@ describe('MatchRules: конец матча', () => {
     expect(result()!.players[1].throws).toBe(MATCH_MAX_THROWS / 2);
   });
 
+  it('восстановленный снимок с последнего броска — матч окончен (перезагрузка в итогах, отставший зритель)', () => {
+    const { rules, left, result } = setup(0);
+    expect(rules.isOver()).toBe(false);
+    // кон пуст
+    rules.importState({ ...rules.exportState(), knocked: [5, 7], throws: [2, 2], bestCombo: [5, 7], total: 4 });
+    left.n = 0;
+    expect(rules.isOver()).toBe(true);
+    rules.onFinish();
+    expect(result()!.reason).toBe('cleared');
+    expect(result()!.winners).toEqual([1]);
+    // броски закончились, асыки ещё есть
+    const b = setup(0);
+    b.rules.importState({ ...b.rules.exportState(), knocked: [1, 2], throws: [15, 15], bestCombo: [1, 1], total: MATCH_MAX_THROWS });
+    b.left.n = 9;
+    expect(b.rules.isOver()).toBe(true);
+    b.rules.onFinish();
+    expect(b.result()!.reason).toBe('limit');
+  });
+
   it('после конца матча новые выбитые не засчитываются, рестарт обнуляет счёт', () => {
     const { rules, play, left, result } = setup(0);
     left.n = 1;

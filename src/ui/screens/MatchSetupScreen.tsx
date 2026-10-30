@@ -1,10 +1,9 @@
 import { useState } from 'react';
-import { MATCH_LAYOUTS } from '../../game/levels/matchLayouts';
 import { PLAYER_STYLE, throwsPerPlayer } from '../../game/rules/MatchRules';
 import type { MatchConfig, Seat } from '../../game/types';
 import { AsykIcon } from '../components/AsykIcon';
 import { Icon } from '../components/Icon';
-import { LevelPreview } from '../components/LevelPreview';
+import { LayoutPicker } from '../components/LayoutPicker';
 import { onlineAvailable } from '../../net/config';
 import { formatRoomCode, parseRoomCodeInput, ROOM_CODE_LENGTH } from '../../net/protocol';
 import { cleanName, NAME_MAX } from '../format';
@@ -232,22 +231,7 @@ export function MatchSetupScreen({ initialNames, initialOnlineName, initialLayou
           {!joining && (
           <fieldset className="setup__group">
             <legend>Кон</legend>
-            <div className="layout-picker" role="radiogroup" aria-label="Расстановка асыков">
-              {MATCH_LAYOUTS.map((l) => (
-                <label key={l.id} className={`layout-option${layoutId === l.id ? ' layout-option--on' : ''}`}>
-                  <input type="radio" name="layout" value={l.id} checked={layoutId === l.id} onChange={() => setLayoutId(l.id)} className="sr-only" />
-                  <span className="layout-option__preview">
-                    <LevelPreview level={l} />
-                  </span>
-                  <span className="layout-option__body">
-                    <b>
-                      {l.name} <small>{l.kazName}</small>
-                    </b>
-                    <span>{l.description}</span>
-                  </span>
-                </label>
-              ))}
-            </div>
+            <LayoutPicker value={layoutId} onChange={setLayoutId} />
           </fieldset>
           )}
 

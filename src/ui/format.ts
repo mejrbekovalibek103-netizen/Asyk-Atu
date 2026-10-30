@@ -8,6 +8,11 @@ export function plural(n: number, forms: [string, string, string]): string {
   return forms[2];
 }
 
+/** Перечисление имён: ['Айдос', 'Ерлан', 'Аружан'] → «Айдос, Ерлан и Аружан». */
+export function listNames(list: readonly string[]): string {
+  return list.length <= 1 ? (list[0] ?? '') : `${list.slice(0, -1).join(', ')} и ${list[list.length - 1]}`;
+}
+
 /** Оставшееся время для таймера: 83000 → «1:23». Секунды округляются вверх, поэтому «0:00» — только когда время вышло. */
 export function clock(ms: number): string {
   const total = Math.max(0, Math.ceil(ms / 1000));

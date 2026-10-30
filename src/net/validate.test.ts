@@ -277,6 +277,16 @@ describe('матч на 2–4 игрока: конфиг, состав, прис
     expect(parsePeer({ clientId: ids4[0], seat: 2, name: 'В', busy: 'yes' })).toEqual({ clientId: ids4[0], seat: 2, name: 'В' });
   });
 
+  it('presence: «смотрит итоги» и кон хозяина — только известный кон, «в матче» важнее итогов', () => {
+    expect(parsePeer({ clientId: ids4[0], seat: 1, name: 'Б', results: true })).toEqual({ clientId: ids4[0], seat: 1, name: 'Б', results: true });
+    expect(parsePeer({ clientId: ids4[0], seat: 1, name: 'Б', results: 1 })).toEqual({ clientId: ids4[0], seat: 1, name: 'Б' });
+    expect(parsePeer({ clientId: ids4[0], seat: 1, name: 'Б', busy: true, results: true })).toEqual({ clientId: ids4[0], seat: 1, name: 'Б', busy: true });
+    expect(parsePeer({ clientId: ids4[0], seat: 0, name: 'А', layoutId: 'uime' })).toEqual({ clientId: ids4[0], seat: 0, name: 'А', layoutId: 'uime' });
+    for (const layoutId of ['нет такого', '__proto__', 7, null, 'uime'.repeat(100)]) {
+      expect(parsePeer({ clientId: ids4[0], seat: 0, name: 'А', layoutId }), String(layoutId)).toEqual({ clientId: ids4[0], seat: 0, name: 'А' });
+    }
+  });
+
   it('пропуск хода: место 0–3 и номер хода, иначе отказ', () => {
     expect(parseNetMessage({ t: 'skip', seat: 2, turnId: 7 })).toEqual({ t: 'skip', seat: 2, turnId: 7 });
     for (const bad of [{ seat: 4, turnId: 7 }, { seat: 1, turnId: 0 }, { seat: 1.5, turnId: 7 }, { seat: 1 }, { seat: '1', turnId: 7 }]) {

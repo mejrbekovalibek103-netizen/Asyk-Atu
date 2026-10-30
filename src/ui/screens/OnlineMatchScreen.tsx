@@ -9,6 +9,7 @@ import type { Room, RoomSnapshot } from '../../net/room';
 import { decideSync, factsOf, totalOf, type SyncTrust } from '../../net/sync';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
+import { listNames } from '../format';
 import { PowerMeter, RotateHint, Toast } from '../game/GameOverlays';
 import { PlayerCard, TurnBanner } from '../game/MatchParts';
 import { useGameEngine } from '../game/useGameEngine';
@@ -34,6 +35,8 @@ interface Props {
   onToggleMute: () => void;
   /** Хозяин запускает реванш с теми, кто готов (id клиентов). */
   onRematchStart: (readyIds: string[]) => void;
+  /** Из итогов — в комнату ожидания (тот же состав; хозяин может сменить кон). */
+  onToLobby: () => void;
   onLeave: () => void;
 }
 
@@ -57,8 +60,6 @@ const SKIP_FALLBACK_MS = 10_000;
 const SKIP_ACCEPT_MS = 12_000;
 /** …и пропускаемый игрок всё это время ничего не присылал. */
 const SKIP_QUIET_MS = 8_000;
-
-const join = (list: string[]) => (list.length <= 1 ? (list[0] ?? '') : `${list.slice(0, -1).join(', ')} и ${list[list.length - 1]}`);
 
 /** Онлайн-матч на 2–4 игрока: этот экран управляет одним игроком, броски остальных приходят по сети. */
 export function OnlineMatchScreen(props: Props) {
@@ -386,15 +387,23 @@ export function OnlineMatchScreen(props: Props) {
   }, [s?.netWaiting, room]);
 
   // в онлайне движок не ставится на паузу (остальные продолжают играть), кроме итогового окна;
-  // после конца матча я больше «не занят»: новички могут сесть за стол
+  // после конца матча я «смотрю итоги»: новички могут сесть за стол, хозяин в комнате ожидания ждёт меня
   useEffect(() => {
     engine?.setPaused(!!result);
-    if (result) room.setBusy(false);
+    room.setStage(result ? 'results' : 'match');
   }, [engine, result, room]);
+
+  // кто из состава уже ушёл из итогов в комнату ожидания: реванша не будет — продолжаем там
+  const peerOf = new Map(roomSnap.peers.map((p) => [p.clientId, p]));
+  const inLobby = (i: number) => {
+    const p = peerOf.get(ids[i]);
+    return !!result && i !== localSeat && !gone(i) && !!p && !p.busy && !p.results;
+  };
+  const lobbySeats = ids.map((_, i) => i).filter(inLobby);
 
   // реванш: хозяин начинает, когда готовы все, кто остался в комнате (и есть хотя бы один соперник)
   const stillHere = ids.map((_, i) => i).filter((i) => i !== localSeat && !gone(i));
-  const everyoneReady = stillHere.length > 0 && stillHere.every((i) => readySeats.has(i));
+  const everyoneReady = stillHere.length > 0 && stillHere.every((i) => readySeats.has(i)) && !lobbySeats.length;
   useEffect(() => {
     if (!result || !isHost || !iAmReady || !everyoneReady) return;
     propsRef.current.onRematchStart([ids[localSeat], ...stillHere.map((i) => ids[i])]);
@@ -404,6 +413,11 @@ export function OnlineMatchScreen(props: Props) {
     sound.uiClick();
     room.send({ t: 'leave' });
     props.onLeave();
+  };
+
+  const toLobby = () => {
+    sound.uiClick();
+    props.onToLobby();
   };
 
   const onRematchClick = () => {
@@ -424,7 +438,7 @@ export function OnlineMatchScreen(props: Props) {
     statusText = 'Связь с сервером восстанавливается…';
     warn = true;
   } else if (badNames.length) {
-    statusText = `${join(badNames)} ${badNames.length === 1 ? 'присылает' : 'присылают'} некорректные данные — они игнорируются`;
+    statusText = `${listNames(badNames)} ${badNames.length === 1 ? 'присылает' : 'присылают'} некорректные данные — они игнорируются`;
   } else if (current >= 0 && current !== localSeat && gone(current) && !m?.finished) {
     warn = true;
     if (n >= 3) {
@@ -437,7 +451,7 @@ export function OnlineMatchScreen(props: Props) {
     }
   } else if (goneOthers.length) {
     warn = true;
-    statusText = `${join(goneOthers.map(name))} не в сети`;
+    statusText = `${listNames(goneOthers.map(name))} не в сети`;
   } else if (s?.netWaiting) {
     statusText = `Ждём данные броска: ${current >= 0 ? name(current) : ''}…`;
   } else if (s?.remoteAiming && current >= 0) {
@@ -446,10 +460,11 @@ export function OnlineMatchScreen(props: Props) {
 
   const rematchInfo: OnlineRematch = {
     ready: iAmReady,
-    readyNames: [...readySeats].filter((i) => !gone(i)).map(name),
-    waitingNames: stillHere.filter((i) => !readySeats.has(i)).map(name),
+    readyNames: [...readySeats].filter((i) => !gone(i) && !inLobby(i)).map(name),
+    waitingNames: stillHere.filter((i) => !readySeats.has(i) && !inLobby(i)).map(name),
     goneNames: goneOthers.map(name),
-    possible: stillHere.length > 0,
+    lobbyNames: lobbySeats.map(name),
+    possible: stillHere.length > 0 && !lobbySeats.length,
   };
 
   return (
@@ -528,9 +543,10 @@ export function OnlineMatchScreen(props: Props) {
           result={result}
           layoutName={layout.name}
           online={rematchInfo}
-          newMatchLabel="Выйти из комнаты"
+          newMatchLabel="В комнату"
+          homeLabel="Выйти из комнаты"
           onRematch={onRematchClick}
-          onNewMatch={leave}
+          onNewMatch={toLobby}
           onHome={leave}
         />
       )}

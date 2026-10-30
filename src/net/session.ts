@@ -15,11 +15,13 @@ export interface RoomSession {
   /** Место в комнате: 0 — хозяин, 1–3 — гости; null — гость ещё не занял место (только что вошёл). */
   seat: Seat | null;
   name: string;
-  /** Кон, выбранный хостом при создании комнаты. */
+  /** Кон следующего матча: хозяин выбирает его при создании комнаты и меняет в комнате ожидания (у гостя пусто). */
   layoutId: string;
-  /** Текущий матч (после старта). */
-  /** state — последний снимок кона и счёта (после каждого броска): перезагрузка не обнуляет матч. */
-  match: { config: MatchConfig; matchId: number; state?: MatchSyncState } | null;
+  /**
+   * Последний матч (после старта). state — последний снимок кона и счёта (после каждого броска): перезагрузка
+   * не обнуляет матч; done — игрок вышел из итогов в комнату ожидания (после перезагрузки он снова там).
+   */
+  match: { config: MatchConfig; matchId: number; state?: MatchSyncState; done?: boolean } | null;
 }
 
 const key = (code: string) => `asyk-atu:room:${code}`;
@@ -51,6 +53,7 @@ export function loadRoomSession(code: string): RoomSession | null {
         match = { config, matchId };
         const state = m.state === undefined ? null : parseStoredSyncState(m.state, config.layoutId, config.players.length);
         if (state) match.state = state;
+        if (m.done === true) match.done = true;
       }
     }
     return {

@@ -36,7 +36,14 @@ export interface PeerInfo {
   name: string;
   /** Игрок сейчас в матче: новичок не занимает место и ждёт конца матча. */
   busy?: boolean;
+  /** Матч окончен, игрок смотрит итоги (ещё не вернулся в комнату ожидания). */
+  results?: boolean;
+  /** Кон следующего матча — его выбирает хозяин (место 0); у гостей не учитывается. */
+  layoutId?: string;
 }
+
+/** Где игрок: в комнате ожидания, в матче или смотрит итоги матча. */
+export type RoomStage = 'lobby' | 'match' | 'results';
 
 export interface Envelope {
   from: string;

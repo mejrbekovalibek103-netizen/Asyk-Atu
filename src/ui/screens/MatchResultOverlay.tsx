@@ -3,9 +3,12 @@ import type { MatchResult, Seat } from '../../game/types';
 import { AsykIcon } from '../components/AsykIcon';
 import { Modal } from '../components/Modal';
 import { Ornament } from '../components/Ornament';
-import { plural } from '../format';
+import { listNames as names, plural } from '../format';
 
-/** Онлайн: готовность к реваншу. Хозяин начинает реванш, когда готовы все игроки, которые ещё в комнате. */
+/**
+ * Онлайн: готовность к реваншу. Хозяин начинает реванш, когда готовы все игроки, которые ещё в комнате.
+ * Если кто-то уже ушёл в комнату ожидания, реванша не будет — следующий матч (и кон) выбирают там.
+ */
 export interface OnlineRematch {
   /** Я уже нажал «Реванш». */
   ready: boolean;
@@ -15,7 +18,9 @@ export interface OnlineRematch {
   waitingNames: string[];
   /** Кто вышел из матча или не в сети. */
   goneNames: string[];
-  /** Реванш вообще возможен: в комнате остался хотя бы один соперник. */
+  /** Кто уже вернулся в комнату ожидания. */
+  lobbyNames: string[];
+  /** Реванш вообще возможен: в комнате остался хотя бы один соперник и никто не ушёл в комнату ожидания. */
   possible: boolean;
 }
 
@@ -27,11 +32,19 @@ interface Props {
   onHome: () => void;
   online?: OnlineRematch;
   newMatchLabel?: string;
+  homeLabel?: string;
 }
 
-const names = (list: string[]) => (list.length <= 1 ? (list[0] ?? '') : `${list.slice(0, -1).join(', ')} и ${list[list.length - 1]}`);
-
-export function MatchResultOverlay({ result: r, layoutName, onRematch, onNewMatch, onHome, online, newMatchLabel = 'Новый матч' }: Props) {
+export function MatchResultOverlay({
+  result: r,
+  layoutName,
+  onRematch,
+  onNewMatch,
+  onHome,
+  online,
+  newMatchLabel = 'Новый матч',
+  homeLabel = 'На главную',
+}: Props) {
   const n = r.players.length;
   const winnerNames = r.winners.map((s) => r.players[s].name);
   const title =
@@ -45,6 +58,7 @@ export function MatchResultOverlay({ result: r, layoutName, onRematch, onNewMatc
   const placeOf = (seat: Seat) => 1 + r.players.filter((p) => p.knocked > r.players[seat].knocked).length;
 
   const othersReady = (online?.readyNames.length ?? 0) > 0;
+  const toLobby = (online?.lobbyNames.length ?? 0) > 0;
   const rematchLabel = !online
     ? 'Реванш'
     : online.ready
@@ -99,20 +113,30 @@ export function MatchResultOverlay({ result: r, layoutName, onRematch, onNewMatc
           Ждём: {names(online.waitingNames)}
         </p>
       )}
+      {online && toLobby && (
+        <p className="result-tip" role="status">
+          {names(online.lobbyNames)} уже в комнате ожидания — продолжим там
+        </p>
+      )}
       {online && online.goneNames.length > 0 && (
         <p className="result-tip" role="status">
           {names(online.goneNames)} {online.goneNames.length === 1 ? 'вышел' : 'вышли'} из матча
         </p>
       )}
       <div className="result-actions">
-        <button className="btn btn--primary" onClick={onRematch} data-autofocus disabled={online && (online.ready || !online.possible)}>
+        <button
+          className={`btn${toLobby ? '' : ' btn--primary'}`}
+          onClick={onRematch}
+          data-autofocus={toLobby ? undefined : true}
+          disabled={online && (online.ready || !online.possible)}
+        >
           {rematchLabel}
         </button>
-        <button className="btn" onClick={onNewMatch}>
+        <button className={`btn${toLobby ? ' btn--primary' : ''}`} onClick={onNewMatch} data-autofocus={toLobby ? true : undefined}>
           {newMatchLabel}
         </button>
         <button className="btn btn--ghost" onClick={onHome}>
-          На главную
+          {homeLabel}
         </button>
       </div>
     </Modal>

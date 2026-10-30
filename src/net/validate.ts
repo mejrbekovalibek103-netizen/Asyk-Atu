@@ -73,6 +73,8 @@ export function parsePeer(raw: unknown): PeerInfo | null {
   if (s === null) return null;
   const peer: PeerInfo = { clientId, seat: s as Seat, name: cleanName(name, s === 0 ? 'Хозяин' : `Гость ${s}`) };
   if (raw.busy === true) peer.busy = true;
+  else if (raw.results === true) peer.results = true;
+  if (isKnownLayout(raw.layoutId)) peer.layoutId = raw.layoutId;
   return peer;
 }
 

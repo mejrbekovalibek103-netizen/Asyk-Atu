@@ -183,6 +183,14 @@ export class MatchRules implements Rules {
     return true;
   }
 
+  /** Кон пуст или броски закончились (и причина конца запоминается для итогов). */
+  isOver(): boolean {
+    if (this.host.asyksLeft() === 0) this.reason = 'cleared';
+    else if (this.total >= this.limit) this.reason = 'limit';
+    else return false;
+    return true;
+  }
+
   onFinish(): void {
     if (this.finished) return;
     this.finished = true;

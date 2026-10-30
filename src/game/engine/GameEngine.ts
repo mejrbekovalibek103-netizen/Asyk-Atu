@@ -574,6 +574,8 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
     this.physics.importAsyks(st.asyks, this.layout.asyks, trusted);
     this.rules.importState?.(st.rules);
     this.remoteAim = null;
+    // снимок с последнего броска (перезагрузка в итогах, отставший зритель): матч окончен и здесь
+    if (this.rules.isOver?.() && this.setPhase('ROUND_COMPLETE')) this.rules.onFinish();
     this.emit();
     return true;
   }

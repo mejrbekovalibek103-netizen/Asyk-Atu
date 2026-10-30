@@ -72,6 +72,15 @@ describe('сессия комнаты в sessionStorage', () => {
     expect(s.layoutId).toBe('');
   });
 
+  it('возврат из итогов в комнату ожидания переживает перезагрузку; не true — не возврат', () => {
+    const s = good();
+    s.match!.done = true;
+    saveRoomSession(CODE, s);
+    expect(loadRoomSession(CODE)?.match).toEqual({ ...good().match, done: true });
+    store.raw.set(KEY, JSON.stringify({ ...good(), match: { ...good().match, done: 'yes' } }));
+    expect(loadRoomSession(CODE)?.match?.done).toBeUndefined();
+  });
+
   it('подделанный матч отбрасывается, а сама сессия (место) остаётся', () => {
     store.raw.set(KEY, JSON.stringify({ ...good(), match: { config: { layoutId: 'нет такого', players: ['a', 'b'], first: 0 }, matchId: 1 } }));
     const s = loadRoomSession(CODE)!;
