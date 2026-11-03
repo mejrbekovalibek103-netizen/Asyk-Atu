@@ -1518,6 +1518,12 @@ button {
   font-size: 16px;
   color: var(--ink);
 }
+.layout-option__size {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--sky);
+}
 .layout-option__body small {
   font-family: var(--font-body);
   font-weight: 700;

@@ -1,5 +1,5 @@
 import type { MatchSyncState } from '../game/engine/GameEngine';
-import { MATCH_LAYOUTS } from '../game/levels/matchLayouts';
+import { getMatchLayout, MATCH_LAYOUTS } from '../game/levels/matchLayouts';
 import type { AsykState } from '../game/physics/PhysicsWorld';
 import type { ReplayEvent, ThrowChunk, ThrowEnd, ThrowStart } from '../game/replay/throwRecord';
 import { MAX_PLAYERS, MIN_PLAYERS, parseMatchState } from '../game/rules/matchState';
@@ -35,8 +35,9 @@ export function isKnownLayout(id: unknown): id is string {
   return typeof id === 'string' && KNOWN_LAYOUTS.has(id);
 }
 
-function layoutAsykCount(layoutId: string): number {
-  return MATCH_LAYOUTS.find((l) => l.id === layoutId)?.asyks.length ?? LIMITS.maxAsyks;
+/** Сколько асыков на коне при данном числе игроков (растущие коны больше у троих и четверых). */
+function layoutAsykCount(layoutId: string, players: number): number {
+  return isKnownLayout(layoutId) ? getMatchLayout(layoutId, players).asyks.length : 0;
 }
 
 /**
@@ -184,7 +185,7 @@ export function parseThrowEnd(raw: unknown): ThrowEnd | null {
 function parseSyncState(raw: unknown, layoutId: string, players: number): MatchSyncState | null {
   if (!isObj(raw)) return null;
   const asyks = parseAsykStates(raw.asyks);
-  const total = layoutAsykCount(layoutId);
+  const total = layoutAsykCount(layoutId, players);
   if (!asyks || asyks.some((a) => a[0] >= total)) return null;
   const rules = parseMatchState(raw.rules, total, players);
   return rules ? { asyks, rules } : null;

@@ -9,7 +9,7 @@ import type { NextStep, Rules, RulesHost } from './Rules';
 
 export { matchThrowLimit, throwsPerPlayer };
 
-/** Оформление игроков: у каждого свой крашеный сақа и браслет (до четырёх игроков за «столом»). */
+/** Оформление игроков: у каждого свой крашеный сақа и цвет каймы рукава (до четырёх игроков за «столом»). */
 export const PLAYER_STYLE: readonly PlayerStyle[] = [
   { palette: 'saka', bracelet: '#c8372d', color: '#e0553a' },
   { palette: 'saka2', bracelet: '#6b3fc4', color: '#8b5cf6' },

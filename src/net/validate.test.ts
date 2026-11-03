@@ -305,4 +305,22 @@ describe('матч на 2–4 игрока: конфиг, состав, прис
     const bad = parseNetMessage({ t: 'sync', config: cfg(), matchId: 2, state: { ...state, rules: { ...state.rules, knocked: [0, 0], throws: [2, 1], bestCombo: [0, 0] } } });
     expect(bad).toBeNull();
   });
+
+  it('растущий кон: число асыков в снимке — по числу игроков из конфига', () => {
+    const big = getMatchLayout('romb-big', 4); // 25 асыков
+    const w = new PhysicsWorld();
+    w.addAsyks(big.asyks);
+    const rules = { current: 1, turnId: 2, knocked: [0, 0, 0, 0], throws: [1, 0, 0, 0], bestCombo: [0, 0, 0, 0], total: 1, finished: false };
+    const state = { asyks: w.exportAsyks(big.asyks.length), rules };
+    const four = parseNetMessage({ t: 'sync', config: cfg({ layoutId: 'romb-big' }), matchId: 2, state });
+    expect(four && four.t === 'sync' ? four.state.asyks : null).toHaveLength(25);
+    // тот же снимок при конфиге на двоих (кон из 16) — асыки с номерами 16–24 не существуют: отказ
+    const two = parseNetMessage({
+      t: 'sync',
+      config: cfg({ layoutId: 'romb-big', players: ['А', 'Б'], ids: ids4.slice(0, 2), first: 0 }),
+      matchId: 2,
+      state: { ...state, rules: { ...rules, knocked: [0, 0], throws: [1, 0], bestCombo: [0, 0] } },
+    });
+    expect(two).toBeNull();
+  });
 });

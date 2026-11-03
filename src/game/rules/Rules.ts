@@ -54,7 +54,7 @@ export interface Rules {
   hud(): ModeHud;
   /** Цвет сақа в руке и в полёте (у каждого игрока свой). */
   sakaPalette(): AsykPalette;
-  /** Цвет браслета на руке. */
+  /** Цвет игрока на руке (кайма рукава). */
   braceletColor(): string;
   /** Одно устройство: игрок нажал «Готов» — бросок снова разрешён. */
   confirmHandoff?(): void;

@@ -28,7 +28,7 @@ interface Props {
 /** Матч вдвоём на одном устройстве. */
 export function MatchScreen(props: Props) {
   const { config, muted } = props;
-  const layout = getMatchLayout(config.layoutId);
+  const layout = getMatchLayout(config.layoutId, config.players.length);
   const [pauseOpen, setPauseOpen] = useState(false);
   const [result, setResult] = useState<MatchResult | null>(null);
 

@@ -231,7 +231,8 @@ export function MatchSetupScreen({ initialNames, initialOnlineName, initialLayou
           {!joining && (
           <fieldset className="setup__group">
             <legend>Кон</legend>
-            <LayoutPicker value={layoutId} onChange={setLayoutId} />
+            {/* на одном устройстве играют двое; онлайн число игроков ещё неизвестно — показываем, как кон растёт */}
+            <LayoutPicker value={layoutId} onChange={setLayoutId} players={online ? undefined : 2} growth={online} />
           </fieldset>
           )}
 

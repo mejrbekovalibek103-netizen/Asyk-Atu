@@ -11,7 +11,7 @@ import { loadRoomSession, saveRoomSession, type RoomSession } from '../../net/se
 import { totalOf } from '../../net/sync';
 import { isKnownLayout } from '../../net/validate';
 import { Icon } from '../components/Icon';
-import { LayoutPicker } from '../components/LayoutPicker';
+import { growingSizeText, LayoutPicker } from '../components/LayoutPicker';
 import { LevelPreview } from '../components/LevelPreview';
 import { cleanName, listNames, NAME_MAX } from '../format';
 import { type LobbySlot, PlayerSlots, RoomCodeCard } from '../game/LobbyParts';
@@ -294,8 +294,11 @@ function Lobby({
   const host = isHost ? null : snap.seats[0];
   // кон выбирает хозяин: у гостя — тот, что хозяин сообщает о себе в комнате
   const layoutId = isHost ? session.layoutId : host?.layoutId;
-  const layout = layoutId ? getMatchLayout(layoutId) : null;
   const count = seatedCount(snap.seats, session.seat);
+  // растущий кон показываем в том размере, в каком он будет у тех, кто сейчас за столом
+  const players = Math.max(2, count);
+  const layout = layoutId ? getMatchLayout(layoutId, players) : null;
+  const size = layoutId ? growingSizeText(layoutId, players) : null;
   // кто из гостей ещё не вернулся из итогов прошлого матча (хозяин ждёт всех; про хозяина — отдельный текст)
   const away = awayFromLobby(snap.seats.slice(1));
   const awayText = `Ждём, пока в комнату ${away.length === 1 ? 'вернётся' : 'вернутся'} ${listNames(away.map((p) => p.name))}`;
@@ -384,7 +387,7 @@ function Lobby({
         {isHost ? (
           <section className="lobby-card lobby-pick" aria-label="Кон следующего матча">
             <h2>{afterMatch ? 'Кон следующего матча' : 'Кон'}</h2>
-            <LayoutPicker value={session.layoutId} onChange={onLayout} />
+            <LayoutPicker value={session.layoutId} onChange={onLayout} players={players} />
             <p className="doc__muted">{RULES_TEXT} Кон выбираешь ты — остальные видят его здесь же.</p>
           </section>
         ) : (
@@ -398,6 +401,7 @@ function Lobby({
                   {layout.name} <small>{layout.kazName}</small>
                 </b>
                 <p className="doc__muted">{layout.description}</p>
+                {size && <p className="layout-option__size">{size}</p>}
                 <p className="doc__muted">{RULES_TEXT} Кон выбирает хозяин комнаты.</p>
               </div>
             </section>

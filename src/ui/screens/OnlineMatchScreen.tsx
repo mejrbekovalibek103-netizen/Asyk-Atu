@@ -64,9 +64,10 @@ const SKIP_QUIET_MS = 8_000;
 /** Онлайн-матч на 2–4 игрока: этот экран управляет одним игроком, броски остальных приходят по сети. */
 export function OnlineMatchScreen(props: Props) {
   const { room, roomSnap, config, matchId, localSeat, muted } = props;
-  const layout = getMatchLayout(config.layoutId);
-  const ids = config.ids ?? [];
   const n = config.players.length;
+  // растущий кон строится по числу игроков — у всех участников матча он одинаковый
+  const layout = getMatchLayout(config.layoutId, n);
+  const ids = config.ids ?? [];
   const [result, setResult] = useState<MatchResult | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   // с чего начинаем: самый свежий из присланного родителем и сохранённого снимков (экран мог быть пересоздан)

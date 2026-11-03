@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CURB, PHYS, WORLD_H, WORLD_W } from '../config';
 import { LEVELS } from '../levels/levels';
-import { MATCH_LAYOUTS } from '../levels/matchLayouts';
+import { getMatchLayout, isGrowingLayout, MATCH_LAYOUTS } from '../levels/matchLayouts';
 import type { KonLayout, LevelConfig } from '../types';
 import { aimFromAnglePower, throwParams } from './aim';
 import { PhysicsWorld } from './PhysicsWorld';
@@ -36,7 +36,8 @@ function checkWorld(w: PhysicsWorld, total: number) {
 }
 
 describe('фаззинг физики: инварианты на всех расстановках', () => {
-  const layouts: KonLayout[] = [...LEVELS, ...MATCH_LAYOUTS];
+  // растущие коны — и в самом большом виде (на четверых)
+  const layouts: KonLayout[] = [...LEVELS, ...MATCH_LAYOUTS, ...MATCH_LAYOUTS.filter((l) => isGrowingLayout(l.id)).map((l) => getMatchLayout(l.id, 4))];
 
   for (const layout of layouts) {
     it(`${layout.name}: случайные и крайние броски`, () => {

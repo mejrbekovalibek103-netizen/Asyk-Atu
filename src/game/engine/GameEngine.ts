@@ -67,6 +67,16 @@ interface Task {
 
 const GRAB_RADIUS = 150;
 
+/** Замах: на сколько рука оттягивается назад при полной силе (единицы мира). */
+const HAND_PULL = 44;
+/** После выпуска рука по инерции проходит вперёд на столько… */
+const HAND_FOLLOW = 34;
+/** …за это время, а затем возвращается. */
+const HAND_FOLLOW_MS = 170;
+const HAND_RETURN_MS = 460;
+/** Высота руки при замахе: чем сильнее бросок, тем выше. */
+const handLift = (power: number) => 0.3 + 0.55 * power;
+
 /**
  * Игровой движок: цикл, физика, ввод, анимация руки, рендер и фазы броска.
  * Счёт, очередь ходов и конец игры решают правила (`Rules`).
@@ -80,7 +90,7 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
   /** Прицел соперника в онлайн-матче. */
   private remoteAim: Aim | null = null;
   hoverGrab = false;
-  hand: HandAnim = { offset: 0, angle: 0, open: 0, sakaInHand: true, reload: 1 };
+  hand: HandAnim = { offset: 0, angle: 0, open: 0, sakaInHand: true, reload: 1, lift: 0 };
   readonly effects: Effects;
   clock = 0;
   sakaLaunchedAt = 0;
@@ -104,7 +114,8 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
   private tutorialStep: TutorialStep | null;
   private paused = false;
   private tasks: Task[] = [];
-  private release: { at: number; from: number } | null = null;
+  /** Выброс руки: когда начался, откуда (смещение замаха) и с какой высоты. */
+  private release: { at: number; from: number; lift: number } | null = null;
   private message: HudMessage | null = null;
   private msgId = 0;
   private waitHintShown = false;
@@ -203,7 +214,7 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
     this.trail = [];
     this.message = null;
     this.effects.clear();
-    this.hand = { offset: 0, angle: 0, open: 0, sakaInHand: true, reload: 0 };
+    this.hand = { offset: 0, angle: 0, open: 0, sakaInHand: true, reload: 0, lift: 0 };
     this.phase = 'READY';
     this.paused = false;
     this.tutorialStep = this.tutorialPending ? 'grab' : null;
@@ -455,7 +466,7 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
     this.player = new ThrowPlayer(start);
     this.launched = false;
     this.hand.angle = start.angle;
-    this.release = { at: this.clock, from: -start.power * 30 };
+    this.release = { at: this.clock, from: -start.power * HAND_PULL, lift: handLift(start.power) };
     sound.throw(start.power);
     this.schedule(RELEASE_DELAY_MS, () => this.startReplay(start));
     this.emit();
@@ -569,7 +580,7 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
       this.release = null;
       this.physics.removeSaka();
       this.phase = 'READY';
-      this.hand = { offset: 0, angle: 0, open: 0, sakaInHand: true, reload: 0 };
+      this.hand = { offset: 0, angle: 0, open: 0, sakaInHand: true, reload: 0, lift: 0 };
     }
     this.physics.importAsyks(st.asyks, this.layout.asyks, trusted);
     this.rules.importState?.(st.rules);
@@ -608,7 +619,7 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
     this.aimSource = null;
     this.launched = false;
     this.waitHintShown = false;
-    this.release = { at: this.clock, from: this.hand.offset };
+    this.release = { at: this.clock, from: this.hand.offset, lift: this.hand.lift };
     if (this.tutorialStep) this.tutorialStep = 'watch';
     sound.throw(aim.power);
     const params = throwParams(aim);
@@ -723,37 +734,53 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
 
   // ——— анимация руки ———
 
+  /**
+   * Движение руки — только картинка: сақа всегда вылетает из THROW_ORIGIN через RELEASE_DELAY_MS
+   * после отпускания (на этом держится и онлайн-синхронизация), рука лишь показывает бросок.
+   *
+   * Замах: рука поворачивается к цели, поднимается и оттягивается назад тем сильнее, чем больше сила.
+   * Выброс: разгон вперёд и вниз — в точку выпуска рука приходит у самой земли и на полной скорости,
+   * пальцы раскрываются, рука по инерции проходит вперёд, приподнимается и плавно возвращается.
+   */
   private animateHand(dt: number): void {
     const h = this.hand;
     const k = 1 - Math.pow(0.001, dt / 1000); // сглаживание, не зависящее от FPS
     if (this.release) {
-      const t = this.clock - this.release.at;
+      const r = this.release;
+      const t = this.clock - r.at;
       if (t < RELEASE_DELAY_MS) {
-        // резкий выброс вперёд до точки выпуска
+        // разгон: скорость растёт до самого выпуска
         const u = t / RELEASE_DELAY_MS;
-        h.offset = this.release.from * (1 - u * u);
+        h.offset = r.from * (1 - u * u);
+        h.lift = r.lift * (1 - u);
         h.open = 0;
-      } else if (t < RELEASE_DELAY_MS + 140) {
-        const u = (t - RELEASE_DELAY_MS) / 140;
-        h.offset = 26 * (1 - (1 - u) * (1 - u));
-        h.open = u;
-      } else if (t < RELEASE_DELAY_MS + 560) {
-        const u = (t - RELEASE_DELAY_MS - 140) / 420;
-        h.offset = 26 * (1 - u);
-        h.open = 1 - u * 0.7;
+      } else if (t < RELEASE_DELAY_MS + HAND_FOLLOW_MS) {
+        // проход вперёд по инерции, пальцы раскрываются — сақа сорвался с них
+        const u = (t - RELEASE_DELAY_MS) / HAND_FOLLOW_MS;
+        h.offset = HAND_FOLLOW * (1 - (1 - u) * (1 - u));
+        h.lift = 0.3 * u;
+        h.open = Math.min(1, u * 2.2);
+      } else if (t < RELEASE_DELAY_MS + HAND_FOLLOW_MS + HAND_RETURN_MS) {
+        const u = (t - RELEASE_DELAY_MS - HAND_FOLLOW_MS) / HAND_RETURN_MS;
+        const s = u * u * (3 - 2 * u);
+        h.offset = HAND_FOLLOW * (1 - s);
+        h.lift = 0.3 * (1 - s);
+        h.open = 1 - 0.75 * s;
       } else {
         this.release = null;
       }
     } else if (this.aim) {
-      // замах: рука поворачивается к цели и оттягивается назад пропорционально силе
-      // (в онлайне так же двигается рука соперника, пока он целится)
+      // замах (в онлайне так же двигается рука соперника, пока он целится)
       const aim = this.aim;
-      h.angle += (aim.angle - h.angle) * Math.min(1, k * 3);
-      h.offset += (-aim.power * 30 - h.offset) * Math.min(1, k * 3);
+      const f = Math.min(1, k * 3);
+      h.angle += (aim.angle - h.angle) * f;
+      h.offset += (-aim.power * HAND_PULL - h.offset) * f;
+      h.lift += (handLift(aim.power) - h.lift) * f;
       h.open += (0 - h.open) * k;
     } else {
       h.offset += (0 - h.offset) * k;
       h.open += (0 - h.open) * k;
+      h.lift += (0 - h.lift) * k;
       if (this.phase === 'READY') h.angle += (0 - h.angle) * k * 0.6;
     }
     if (h.sakaInHand && h.reload < 1) h.reload = Math.min(1, h.reload + dt / 320);

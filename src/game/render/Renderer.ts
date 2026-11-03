@@ -20,6 +20,8 @@ export interface HandAnim {
   sakaInHand: boolean;
   /** Анимация появления нового сақа 0…1. */
   reload: number;
+  /** Насколько рука поднята над землёй 0…1: при замахе она чуть крупнее, а тень дальше. */
+  lift: number;
 }
 
 /** То, что рендерер читает у движка каждый кадр. */
@@ -27,7 +29,7 @@ export interface SceneView {
   readonly layout: KonLayout;
   /** Цвет сақа текущего игрока. */
   readonly sakaPalette: AsykPalette;
-  /** Цвет браслета на руке текущего игрока. */
+  /** Цвет игрока на руке (кайма рукава) — у текущего игрока. */
   readonly braceletColor: string;
   readonly pieces: readonly Piece[];
   readonly phase: Phase;
@@ -302,17 +304,21 @@ export class Renderer {
       ctx.restore();
     }
 
-    // рука мальчика крупнее «реального» масштаба сақа — ближе к камере, ощущение «это моя рука»
-    const HS = 1.3;
+    // рука мальчика крупнее «реального» масштаба сақа — ближе к камере, ощущение «это моя рука»;
+    // поднятая рука (замах) ещё чуть крупнее, а её тень отходит дальше от солнца
+    const lift = Math.max(0, Math.min(1, h.lift));
+    const LS = 1 + 0.1 * lift;
+    const HS = 1.3 * LS;
     ctx.save();
     ctx.translate(hx, hy);
     ctx.rotate(h.angle);
     // тень руки не должна вращаться вместе с рукой — компенсируем поворот
     ctx.save();
     ctx.rotate(-h.angle);
-    ctx.translate(18, 26);
+    ctx.translate(18 + 26 * lift, 26 + 36 * lift);
     ctx.rotate(h.angle);
     ctx.scale(HS, HS);
+    ctx.globalAlpha = 1 - 0.35 * lift;
     drawHandShadow(ctx, { open: h.open });
     ctx.restore();
 
@@ -323,7 +329,7 @@ export class Renderer {
     if (h.sakaInHand) {
       const s = easeOutBack(h.reload);
       // сақа в руке — длинная ось вдоль направления броска (как при запуске)
-      drawAsyk(ctx, 0, 0, -Math.PI / 2, SAKA_W, SAKA_H, v.sakaPalette, 'buk', Math.min(1, h.reload * 1.5), s);
+      drawAsyk(ctx, 0, 0, -Math.PI / 2, SAKA_W, SAKA_H, v.sakaPalette, 'buk', Math.min(1, h.reload * 1.5), s * LS);
     }
     ctx.scale(HS, HS);
     drawHandFingers(ctx, { open: h.open });
