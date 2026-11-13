@@ -70,7 +70,7 @@ export function RoomCodeCard({ code, link }: { code: string; link: string }) {
         {shown}
       </p>
       <p className="doc__muted code-card__how">
-        Друг вводит его в «Игра вдвоём → Онлайн → Войти по коду» или открывает ссылку.
+        Друг вводит его в «Онлайн игра → Войти по коду» или открывает ссылку.
       </p>
       <div className="share-row">
         <button className="btn btn--primary" onClick={() => copy('code')}>

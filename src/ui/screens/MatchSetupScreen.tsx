@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { PLAYER_STYLE, throwsPerPlayer } from '../../game/rules/MatchRules';
 import type { MatchConfig, Seat } from '../../game/types';
 import { AsykIcon } from '../components/AsykIcon';
@@ -9,6 +9,8 @@ import { formatRoomCode, parseRoomCodeInput, ROOM_CODE_LENGTH } from '../../net/
 import { cleanName, NAME_MAX } from '../format';
 
 interface Props {
+  /** Какой это экран: «Игра вдвоём» (одно устройство) или «Онлайн игра». */
+  mode: Mode;
   initialNames: [string, string];
   initialOnlineName: string;
   initialLayoutId: string;
@@ -18,6 +20,8 @@ interface Props {
   onCreateRoom: (name: string, layoutId: string) => void;
   /** Онлайн: войти в чужую комнату по коду. */
   onJoinRoom: (name: string, code: string) => void;
+  /** Онлайн: открыть «Мою коллекцию» (вход через Google и асыки игрока). */
+  onCollection: () => void;
   onBack: () => void;
 }
 
@@ -42,14 +46,19 @@ function formatTyped(raw: string): string {
   return clean.length > half ? `${clean.slice(0, half)}-${clean.slice(half)}` : clean;
 }
 
-export function MatchSetupScreen({ initialNames, initialOnlineName, initialLayoutId, initialHandoff, onStart, onCreateRoom, onJoinRoom, onBack }: Props) {
+// онлайн-часть игры подгружается заранее, пока игрок вводит имя
+const preloadRoom = () => void import('./RoomScreen');
+
+export function MatchSetupScreen({ mode, initialNames, initialOnlineName, initialLayoutId, initialHandoff, onStart, onCreateRoom, onJoinRoom, onCollection, onBack }: Props) {
   const [names, setNames] = useState<[string, string]>(initialNames);
   const [onlineName, setOnlineName] = useState(initialOnlineName || initialNames[0]);
   const [layoutId, setLayoutId] = useState(initialLayoutId);
   const [handoff, setHandoff] = useState(initialHandoff);
-  const [mode, setMode] = useState<Mode>('local');
-  const online = mode === 'online';
+  const online = mode === 'online' && onlineAvailable;
   const [action, setAction] = useState<OnlineAction>('create');
+  useEffect(() => {
+    if (online) preloadRoom();
+  }, [online]);
   const [codeInput, setCodeInput] = useState('');
   const joining = online && action === 'join';
   const roomCode = parseRoomCodeInput(codeInput);
@@ -69,33 +78,33 @@ export function MatchSetupScreen({ initialNames, initialOnlineName, initialLayou
         <button className="back-btn" onClick={onBack}>
           <Icon name="back" /> Назад
         </button>
-        <h1 className="doc__title">Игра вдвоём</h1>
+        <h1 className="doc__title">{online ? 'Онлайн игра' : 'Игра вдвоём'}</h1>
         <p className="doc__lead">
           {online
-            ? 'Каждый играет на своём телефоне или компьютере, за столом до четырёх игроков: создай комнату и отправь друзьям код или ссылку — или введи код друга.'
+            ? 'Каждый играет на своём телефоне или компьютере, за столом от двух до четырёх игроков: создай комнату и отправь друзьям код или ссылку — или введи код друга.'
             : 'Два игрока на одном устройстве — передавайте телефон или мышь по очереди.'}
         </p>
 
-        {onlineAvailable && (
-          <div className="mode-switch" role="radiogroup" aria-label="Где играем">
-            {(
-              [
-                ['local', 'На одном устройстве'],
-                ['online', 'Онлайн по коду'],
-              ] as const
-            ).map(([value, label]) => (
-              <label key={value} className={`mode-switch__option${mode === value ? ' mode-switch__option--on' : ''}`}>
-                <input type="radio" name="mode" value={value} checked={mode === value} onChange={() => {
-                    setMode(value);
-                    // заранее подгружаем онлайн-часть игры, пока игрок вводит имя
-                    if (value === 'online') void import('./RoomScreen');
-                  }}
-                  className="sr-only"
-                />
-                <Icon name={value === 'local' ? 'users' : 'globe'} /> {label}
-              </label>
-            ))}
+        {online && (
+          <div className="mode-switch" role="radiogroup" aria-label="Режим онлайн-игры">
+            <label className="mode-switch__option mode-switch__option--on">
+              <input type="radio" name="online-kind" value="casual" checked readOnly className="sr-only" />
+              <Icon name="globe" /> Обычная игра
+            </label>
+            {/* соревновательный режим (игроки ставят в кон свои асыки) — в разработке */}
+            <label className="mode-switch__option mode-switch__option--soon" title="Игроки ставят в кон свои асыки и забирают выбитые. Скоро">
+              <input type="radio" name="online-kind" value="ranked" disabled className="sr-only" />
+              <span>
+                Соревновательная <small>скоро</small>
+              </span>
+            </label>
           </div>
+        )}
+
+        {online && (
+          <button type="button" className="btn btn--block collection-link" onClick={onCollection}>
+            <AsykIcon size={26} /> Моя коллекция асыков
+          </button>
         )}
 
         {online && (
@@ -130,7 +139,8 @@ export function MatchSetupScreen({ initialNames, initialOnlineName, initialLayou
           <div className="rules-card__item">
             <span className="rules-card__num">3</span>
             <p>
-              <b>Кон пуст — матч окончен.</b> Побеждает тот, кто выбил больше асыков. Лимит — по {throwsPerPlayer(2)} бросков на каждого.
+              <b>Кон пуст — матч окончен.</b> Побеждает тот, кто выбил больше асыков. Лимит — по {throwsPerPlayer(2)} бросков на каждого
+              {online ? ` (у троих и четверых — по ${throwsPerPlayer(3)})` : ''}.
             </p>
           </div>
         </section>

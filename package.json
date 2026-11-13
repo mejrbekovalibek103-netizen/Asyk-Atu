@@ -10,7 +10,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "dev:lan": "vite --host",
-    "audit:prod": "npm audit --omit=dev --audit-level=high"
+    "audit:prod": "npm audit --omit=dev --audit-level=high",
+    "check:secrets": "node scripts/check-secrets.mjs"
   },
   "dependencies": {
     "@fontsource-variable/manrope": "^5.3.0",

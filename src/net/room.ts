@@ -1,7 +1,7 @@
-import { createClient, type RealtimeChannel, type SupabaseClient } from '@supabase/supabase-js';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 import { MAX_PLAYERS } from '../game/rules/matchState';
 import type { Seat } from '../game/types';
-import { SUPABASE_KEY, SUPABASE_URL } from './config';
+import { getSupabase as getClient } from './client';
 import { LIMITS, RATES, RateLimiter, StrikeCounter } from './limits';
 import { CLIENT_ID_RE, type Envelope, type NetMessage, type PeerInfo, type RoomStage } from './protocol';
 import { mustYieldSeat, pickFreeSeat, resolveSeats } from './seats';
@@ -19,23 +19,6 @@ import { parseEnvelope, parsePeer } from './validate';
  * (занимает место или входит в состав матча) → лимит частоты этого отправителя → его счётчик нарушений.
  * Недоверенные данные до игры не доходят, а один спамер не блокирует остальных игроков.
  */
-
-let client: SupabaseClient | null = null;
-
-function getClient(): SupabaseClient {
-  if (!client) {
-    client = createClient(SUPABASE_URL!, SUPABASE_KEY!, {
-      auth: { persistSession: false, autoRefreshToken: false },
-      realtime: {
-        // прицел ~12/с + запись броска ~4/с; запас на всплески
-        params: { eventsPerSecond: 40 },
-        // сердцебиение соединения из Web Worker: фоновая вкладка не теряет связь из-за замедленных таймеров
-        worker: true,
-      },
-    });
-  }
-  return client;
-}
 
 /**
  * - `full` — свободных мест нет (или моё место занято, а я хозяин);

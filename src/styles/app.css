@@ -1370,6 +1370,70 @@ button {
   border-color: #c9b3ef;
   background: linear-gradient(90deg, rgba(212, 68, 43, 0.12), rgba(123, 79, 214, 0.16));
 }
+.btn--online {
+  width: 100%;
+  border-color: #cfe6ee;
+  background: linear-gradient(90deg, rgba(21, 150, 180, 0.1), rgba(47, 158, 95, 0.1));
+}
+.btn--online:hover {
+  border-color: #a9d3e0;
+  background: linear-gradient(90deg, rgba(21, 150, 180, 0.16), rgba(47, 158, 95, 0.16));
+}
+.mode-switch__option--soon {
+  opacity: 0.6;
+  cursor: default;
+}
+.mode-switch__option small {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+/* коллекция асыков */
+/* кнопка входа — в стиле Google: белая, серая рамка, фирменная «G» */
+.btn--google {
+  gap: 12px;
+  background: #fff;
+  color: #1f1f1f;
+  border: 1px solid #dadce0;
+  box-shadow: 0 1px 2px rgba(60, 64, 67, 0.12);
+}
+.btn--google:hover:not(:disabled) {
+  background: #f8f9fa;
+  border-color: #c6c9ce;
+  box-shadow: 0 2px 6px rgba(60, 64, 67, 0.18);
+}
+.btn--google:disabled {
+  opacity: 0.7;
+}
+.collection-link {
+  margin-top: 12px;
+}
+.collection-card {
+  display: grid;
+  gap: 12px;
+}
+.collection-count {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 22px;
+}
+.collection-count b {
+  font-size: 34px;
+  color: var(--sky);
+}
+.collection-grid {
+  list-style: none;
+  margin: 0;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+  gap: 10px;
+  justify-items: center;
+  background: var(--bg);
+  border-radius: 12px;
+}
 
 /* настройка матча */
 .rules-card {

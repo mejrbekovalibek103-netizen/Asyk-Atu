@@ -5,7 +5,7 @@ import { LEVELS } from './game/levels/levels';
 import type { MatchConfig, RoundResult, Seat } from './game/types';
 import { applyRoundResult, emptySave, isLevelUnlocked, loadSave, writeSave, type RecordOutcome, type SaveData } from './storage/progress';
 import { clearAllRounds, clearDuelRound, clearSoloRound, loadDuelRound } from './storage/roundSave';
-import { hashToRoute, routeToHash, type Route } from './ui/routes';
+import { hashToRoute, oauthReturn, routeToHash, type Route } from './ui/routes';
 import { AboutScreen } from './ui/screens/AboutScreen';
 import { GameScreen } from './ui/screens/GameScreen';
 import { HowToScreen } from './ui/screens/HowToScreen';
@@ -13,6 +13,7 @@ import { LevelSelectScreen } from './ui/screens/LevelSelectScreen';
 import { MatchScreen } from './ui/screens/MatchScreen';
 import { MatchSetupScreen } from './ui/screens/MatchSetupScreen';
 // онлайн-часть (и библиотека Supabase) грузится отдельным фрагментом — только когда открывается комната
+const CollectionScreen = lazy(() => import('./ui/screens/CollectionScreen').then((m) => ({ default: m.CollectionScreen })));
 const RoomScreen = lazy(() => import('./ui/screens/RoomScreen').then((m) => ({ default: m.RoomScreen })));
 import { makeClientId, makeRoomCode } from './net/protocol';
 import { loadRoomSession, saveRoomSession } from './net/session';
@@ -29,11 +30,29 @@ const TITLES: Record<Route['name'], string> = {
   RECORDS: 'Рекорды · Асық ату',
   ABOUT: 'Об игре · Асық ату',
   MATCH_SETUP: 'Игра вдвоём · Асық ату',
+  ONLINE_SETUP: 'Онлайн игра · Асық ату',
+  COLLECTION: 'Моя коллекция · Асық ату',
   MATCH: 'Матч · Асық ату',
   ROOM: 'Онлайн-матч · Асық ату',
 };
 
+function LoadingPage() {
+  return (
+    <main className="page page--doc">
+      <p className="doc__lead" role="status">
+        Загрузка…
+      </p>
+    </main>
+  );
+}
+
 export function App() {
+  // возврат со страницы входа Google: открываем коллекцию (ошибку входа из адреса сразу убираем)
+  const [oauth] = useState(() => {
+    const back = oauthReturn(window.location.search, window.location.hash);
+    if (back) window.history.replaceState(null, '', (back.error ? window.location.pathname : window.location.pathname + window.location.search) + routeToHash({ name: 'COLLECTION' }));
+    return back;
+  });
   const [route, setRoute] = useState<Route>(() => hashToRoute(window.location.hash));
   const [save, setSave] = useState<SaveData>(() => loadSave());
   const saveRef = useRef(save);
@@ -202,8 +221,11 @@ export function App() {
     case 'ABOUT':
       return <AboutScreen onNavigate={navigate} onBack={back} />;
     case 'MATCH_SETUP':
+    case 'ONLINE_SETUP':
       return (
         <MatchSetupScreen
+          key={route.name}
+          mode={route.name === 'ONLINE_SETUP' ? 'online' : 'local'}
           initialNames={save.settings.duelNames}
           initialOnlineName={save.settings.onlineName}
           initialLayoutId={save.settings.duelLayout}
@@ -211,8 +233,15 @@ export function App() {
           onStart={startMatch}
           onCreateRoom={createRoom}
           onJoinRoom={joinRoom}
+          onCollection={() => navigate({ name: 'COLLECTION' })}
           onBack={() => navigate({ name: 'MENU' })}
         />
+      );
+    case 'COLLECTION':
+      return (
+        <Suspense fallback={<LoadingPage />}>
+          <CollectionScreen authError={!!oauth?.error} onBack={() => navigate({ name: 'ONLINE_SETUP' })} />
+        </Suspense>
       );
     case 'ROOM':
       return (

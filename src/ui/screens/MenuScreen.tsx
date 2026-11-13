@@ -1,6 +1,7 @@
 import { LEVELS } from '../../game/levels/levels';
 import type { SaveData } from '../../storage/progress';
 import { HeroScene } from '../components/HeroScene';
+import { onlineAvailable } from '../../net/config';
 import { Icon } from '../components/Icon';
 import { Ornament } from '../components/Ornament';
 import type { Route } from '../routes';
@@ -39,6 +40,11 @@ export function MenuScreen({ save, muted, onToggleMute, onNavigate }: Props) {
             <button className="btn btn--duel" onClick={() => onNavigate({ name: 'MATCH_SETUP' })}>
               <Icon name="users" /> Игра вдвоём
             </button>
+            {onlineAvailable && (
+              <button className="btn btn--online" onClick={() => onNavigate({ name: 'ONLINE_SETUP' })}>
+                <Icon name="globe" /> Онлайн игра
+              </button>
+            )}
             <div className="menu__secondary">
               <button className="btn" onClick={() => onNavigate({ name: 'HOW_TO' })}>
                 <Icon name="help" /> Как играть
