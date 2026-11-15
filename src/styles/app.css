@@ -2142,3 +2142,243 @@ button {
 .check-row:has(input:focus-visible) {
   box-shadow: var(--focus);
 }
+
+/* =========================================================
+   Матч на асыки (соревновательный режим)
+   ========================================================= */
+
+/* переключатель «Соревновательная» на экране «Онлайн игра» — кнопка в виде варианта */
+.mode-switch__option--comp {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-weight: 800;
+  font-size: 15px;
+}
+.mode-switch__option--comp:hover:not([aria-disabled='true']) {
+  background: rgba(255, 255, 255, 0.6);
+}
+.mode-switch__option--comp[aria-disabled='true'] {
+  cursor: default;
+}
+
+/* окно ставки */
+.modal--stake {
+  max-width: 420px;
+}
+.stake-row {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: -6px 0 12px;
+}
+.stake-rules {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  text-align: left;
+}
+.stake-rules li {
+  padding: 8px 12px;
+  border-left: 4px solid var(--sun);
+  border-radius: 10px;
+  background: var(--bg);
+  font-size: 14px;
+  color: var(--ink-2);
+}
+.stake-rules b {
+  display: block;
+  color: var(--ink);
+}
+.stake-free {
+  margin-top: 12px;
+  font-weight: 800;
+  color: var(--grass);
+}
+.stake-free--low {
+  color: #b0261f;
+}
+
+/* лобби */
+.comp-wallet {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.comp-wallet p {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+.comp-wallet b {
+  font-family: var(--font-display);
+  font-size: 20px;
+  color: var(--sky-600);
+}
+.comp-active {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 14px;
+  border-left: 5px solid var(--sun);
+  border-radius: 12px;
+  background: #fff7dc;
+}
+.comp-active p {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.lobby-card.comp-active {
+  background: #fff7dc;
+}
+.comp-error {
+  display: grid;
+  gap: 4px;
+}
+.comp-error .share-row {
+  margin-top: 4px;
+}
+.comp-slots .lobby-slot {
+  min-height: 52px;
+}
+.lobby-slot__note--ok {
+  color: var(--grass);
+}
+.comp-kick {
+  flex: none;
+  min-height: 36px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+.comp-actions {
+  margin-top: 8px;
+  display: grid;
+  gap: 8px;
+}
+.comp-actions .btn {
+  margin-top: 0;
+}
+.comp-note {
+  margin-top: 8px;
+  text-align: center;
+}
+.comp-countdown {
+  margin: 0 0 10px;
+  text-align: center;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 40px;
+  color: var(--sky-600);
+}
+.comp-countdown--low {
+  color: var(--danger);
+}
+
+/* HUD матча на асыки: под именем — броски */
+.comp-card__info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+.comp-card__throws {
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.75;
+  white-space: nowrap;
+}
+.net-status--busy {
+  background: var(--sky-50);
+  color: var(--sky-600);
+}
+
+/* итоги */
+.modal--comp {
+  max-width: 460px;
+}
+.comp-delta {
+  margin: 4px 0 6px;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 52px;
+  line-height: 1;
+  color: var(--ink-2);
+}
+.comp-delta--up {
+  color: var(--grass);
+}
+.comp-delta--down {
+  color: var(--danger);
+}
+.comp-result__score {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink-2);
+}
+.comp-result {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+  text-align: left;
+}
+.comp-result__part {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--bg);
+}
+.comp-result__part--won {
+  background: #e9f6e6;
+}
+.comp-result__part--lost {
+  background: #fdecea;
+}
+.comp-result__part h3 {
+  font-size: 15px;
+}
+.comp-result__hint {
+  font-size: 13px;
+  color: var(--muted);
+}
+.comp-result__icons {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.comp-result__empty {
+  margin-top: 2px;
+  color: var(--muted);
+}
+
+/* коллекция: асык в коне матча */
+.collection-free {
+  font-size: 15px;
+  color: var(--muted);
+}
+.collection-item {
+  position: relative;
+}
+.collection-item--locked svg {
+  opacity: 0.45;
+}
+.collection-item__badge {
+  position: absolute;
+  left: 50%;
+  bottom: -4px;
+  transform: translateX(-50%);
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--sun);
+  color: #3b2a00;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 15px;
+  white-space: nowrap;
+}

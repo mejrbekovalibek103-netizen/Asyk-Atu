@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { PLAYER_STYLE, throwsPerPlayer } from '../../game/rules/MatchRules';
 import type { MatchConfig, Seat } from '../../game/types';
 import { AsykIcon } from '../components/AsykIcon';
@@ -6,7 +6,13 @@ import { Icon } from '../components/Icon';
 import { LayoutPicker } from '../components/LayoutPicker';
 import { onlineAvailable } from '../../net/config';
 import { formatRoomCode, parseRoomCodeInput, ROOM_CODE_LENGTH } from '../../net/protocol';
+import { STAKE_SIZE } from '../../net/collection';
 import { cleanName, NAME_MAX } from '../format';
+import type { CompEntry } from './CompetitiveLobbyScreen';
+
+// узнать, вошёл ли игрок через Google и сколько у него свободных асыков: модуль режима грузится отдельно,
+// вместе с Supabase, — основной файл игры от этого не растёт
+const CompAccountProbe = lazy(() => import('./CompetitiveLobbyScreen').then((m) => ({ default: m.CompAccountProbe })));
 
 interface Props {
   /** Какой это экран: «Игра вдвоём» (одно устройство) или «Онлайн игра». */
@@ -22,6 +28,8 @@ interface Props {
   onJoinRoom: (name: string, code: string) => void;
   /** Онлайн: открыть «Мою коллекцию» (вход через Google и асыки игрока). */
   onCollection: () => void;
+  /** Онлайн: соревновательный режим «на асыки» (#/comp). */
+  onCompetitive: () => void;
   onBack: () => void;
 }
 
@@ -49,13 +57,15 @@ function formatTyped(raw: string): string {
 // онлайн-часть игры подгружается заранее, пока игрок вводит имя
 const preloadRoom = () => void import('./RoomScreen');
 
-export function MatchSetupScreen({ mode, initialNames, initialOnlineName, initialLayoutId, initialHandoff, onStart, onCreateRoom, onJoinRoom, onCollection, onBack }: Props) {
+export function MatchSetupScreen({ mode, initialNames, initialOnlineName, initialLayoutId, initialHandoff, onStart, onCreateRoom, onJoinRoom, onCollection, onCompetitive, onBack }: Props) {
   const [names, setNames] = useState<[string, string]>(initialNames);
   const [onlineName, setOnlineName] = useState(initialOnlineName || initialNames[0]);
   const [layoutId, setLayoutId] = useState(initialLayoutId);
   const [handoff, setHandoff] = useState(initialHandoff);
   const online = mode === 'online' && onlineAvailable;
   const [action, setAction] = useState<OnlineAction>('create');
+  const [comp, setComp] = useState<CompEntry>({ kind: 'loading' });
+  const [compBusy, setCompBusy] = useState(false);
   useEffect(() => {
     if (online) preloadRoom();
   }, [online]);
@@ -63,6 +73,35 @@ export function MatchSetupScreen({ mode, initialNames, initialOnlineName, initia
   const joining = online && action === 'join';
   const roomCode = parseRoomCodeInput(codeInput);
   const hint = codeHint(codeInput, roomCode);
+
+  // «Соревновательная»: без входа — на вход через Google (вернёмся на #/comp), мало асыков — кнопка серая
+  const compLow = comp.kind === 'ready' && comp.free < STAKE_SIZE && !comp.inMatch;
+  const compNote =
+    comp.kind === 'signedOut'
+      ? compBusy
+        ? 'открываем Google…'
+        : 'вход через Google'
+      : comp.kind === 'ready'
+        ? comp.inMatch
+          ? 'ты в матче'
+          : compLow
+            ? `У тебя ${comp.free}, нужно ${STAKE_SIZE}`
+            : 'на асыки'
+        : 'на асыки';
+  const openComp = () => {
+    if (compLow || compBusy) return;
+    if (comp.kind !== 'signedOut') {
+      onCompetitive();
+      return;
+    }
+    setCompBusy(true);
+    void import('./CompetitiveLobbyScreen')
+      .then((m) => m.compSignIn())
+      .then((ok) => {
+        if (!ok) setCompBusy(false);
+      })
+      .catch(() => setCompBusy(false));
+  };
 
   const start = () => {
     const players: [string, string] = [cleanName(names[0], 'Игрок 1'), cleanName(names[1], 'Игрок 2')];
@@ -86,18 +125,25 @@ export function MatchSetupScreen({ mode, initialNames, initialOnlineName, initia
         </p>
 
         {online && (
-          <div className="mode-switch" role="radiogroup" aria-label="Режим онлайн-игры">
-            <label className="mode-switch__option mode-switch__option--on">
-              <input type="radio" name="online-kind" value="casual" checked readOnly className="sr-only" />
+          <div className="mode-switch" role="group" aria-label="Режим онлайн-игры">
+            <span className="mode-switch__option mode-switch__option--on" aria-current="true">
               <Icon name="globe" /> Обычная игра
-            </label>
-            {/* соревновательный режим (игроки ставят в кон свои асыки) — в разработке */}
-            <label className="mode-switch__option mode-switch__option--soon" title="Игроки ставят в кон свои асыки и забирают выбитые. Скоро">
-              <input type="radio" name="online-kind" value="ranked" disabled className="sr-only" />
+            </span>
+            {/* соревновательный режим: игроки ставят в кон по 5 своих асыков и забирают выбитые */}
+            <button
+              type="button"
+              className={`mode-switch__option mode-switch__option--comp${compLow ? ' mode-switch__option--soon' : ''}`}
+              onClick={openComp}
+              aria-disabled={compLow || compBusy}
+              title="Ставите в кон по 5 своих асыков, выбитые забирает тот, кто выбил"
+            >
               <span>
-                Соревновательная <small>скоро</small>
+                Соревновательная <small>{compNote}</small>
               </span>
-            </label>
+            </button>
+            <Suspense fallback={null}>
+              <CompAccountProbe onChange={setComp} />
+            </Suspense>
           </div>
         )}
 

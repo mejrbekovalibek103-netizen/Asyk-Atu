@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { LIMITS } from '../../net/limits';
-import { ASYK_H, ASYK_W, CURB, PHYS, THROW_LINE_Y, THROW_ORIGIN, WORLD_W } from '../config';
+import { ASYK_H, ASYK_W, COMP_STAKE, COMP_THROWS_PER_PLAYER, CURB, PHYS, THROW_LINE_Y, THROW_ORIGIN, WORLD_W } from '../config';
 import { aimFromAnglePower } from '../physics/aim';
 import { PhysicsWorld } from '../physics/PhysicsWorld';
 import { simulateThrow } from '../physics/simulate';
 import { matchThrowLimit } from '../rules/matchState';
 import type { KonLayout, LevelConfig } from '../types';
-import { getMatchLayout, isGrowingLayout, layoutSizes, MATCH_LAYOUTS } from './matchLayouts';
+import { getMatchLayout, getStakeLayout, isGrowingLayout, isStakeLayout, layoutSizes, MATCH_LAYOUTS, STAKE_LAYOUT_IDS, STAKE_LAYOUTS } from './matchLayouts';
 import { zoneContains } from './zone';
 
 const GROWING = MATCH_LAYOUTS.filter((l) => isGrowingLayout(l.id)).map((l) => l.id);
@@ -136,6 +136,75 @@ describe('растущие коны: проходимость за лимит м
       const l = getMatchLayout(id, n);
       it(`${l.name} на ${n} (${l.asyks.length} асыков): кон очищается за ${matchThrowLimit(n)} бросков`, () => {
         const t = throwsToClear(l, matchThrowLimit(n));
+        expect(t, `кон «${l.name}» на ${n} игроков не очищается`).not.toBeNull();
+      }, 120_000);
+    }
+  }
+});
+
+// ——— коны соревновательного режима ———
+
+describe('коны «на асыки»: ровно 5 асыков от каждого игрока', () => {
+  it('три кона, отдельно от обычных', () => {
+    expect(STAKE_LAYOUT_IDS).toEqual(['stake-line', 'stake-scatter', 'stake-ring']);
+    expect(STAKE_LAYOUTS.map((l) => l.id)).toEqual([...STAKE_LAYOUT_IDS]);
+    for (const id of STAKE_LAYOUT_IDS) {
+      expect(isStakeLayout(id)).toBe(true);
+      expect(MATCH_LAYOUTS.some((l) => l.id === id)).toBe(false);
+    }
+    for (const id of ['ulken-kon', 'korgan', '', 'Stake-line', null, 3]) expect(isStakeLayout(id)).toBe(false);
+  });
+
+  it('неизвестный кон или неверное число игроков — ошибка, а не «первый попавшийся» кон', () => {
+    expect(() => getStakeLayout('ulken-kon', 2)).toThrow();
+    for (const n of [0, 1, 5, 2.5, Number.NaN]) expect(() => getStakeLayout('stake-line', n)).toThrow();
+  });
+
+  for (const id of STAKE_LAYOUT_IDS) {
+    for (const n of PLAYERS) {
+      const l = getStakeLayout(id, n);
+      it(`${l.name} на ${n}: ${COMP_STAKE * n} асыков внутри кона и двора, не пересекаются, досягаемы`, () => {
+        expect(l.asyks).toHaveLength(COMP_STAKE * n);
+        expect(l.obstacles ?? []).toHaveLength(0);
+        for (const a of l.asyks) {
+          expect(zoneContains(l.zone, a)).toBe(true);
+          expect(a.x - ASYK_W / 2).toBeGreaterThan(CURB);
+          expect(a.x + ASYK_W / 2).toBeLessThan(WORLD_W - CURB);
+          expect(a.y).toBeLessThan(THROW_LINE_Y - 200);
+          expect(Math.hypot(a.x - THROW_ORIGIN.x, a.y - THROW_ORIGIN.y)).toBeLessThan(PHYS.maxSlide * 0.85);
+        }
+        if (l.zone.kind === 'rect') {
+          expect(l.zone.x).toBeGreaterThan(CURB);
+          expect(l.zone.x + l.zone.w).toBeLessThan(WORLD_W - CURB);
+        } else {
+          expect(l.zone.cx - l.zone.r).toBeGreaterThan(CURB);
+          expect(l.zone.cx + l.zone.r).toBeLessThan(WORLD_W - CURB);
+        }
+        const s = l.asyks;
+        for (let i = 0; i < s.length; i++) {
+          for (let j = i + 1; j < s.length; j++) {
+            const dx = Math.abs(s[i].x - s[j].x);
+            const dy = Math.abs(s[i].y - s[j].y);
+            expect(dx >= ASYK_W + 2 || dy >= ASYK_H + 2 || Math.hypot(dx, dy) >= Math.hypot(ASYK_W, ASYK_H) * 0.75).toBe(true);
+          }
+        }
+      });
+
+      it(`${l.name} на ${n}: строится детерминированно`, () => {
+        expect(getStakeLayout(id, n)).toBe(l);
+        expect(JSON.parse(JSON.stringify(l))).toEqual(JSON.parse(JSON.stringify(getStakeLayout(id, n))));
+      });
+    }
+  }
+});
+
+describe('коны «на асыки»: проходимость за лимит бросков матча', () => {
+  for (const id of STAKE_LAYOUT_IDS) {
+    for (const n of PLAYERS) {
+      const l = getStakeLayout(id, n);
+      const limit = COMP_THROWS_PER_PLAYER * n;
+      it(`${l.name} на ${n} (${l.asyks.length} асыков): кон очищается за ${limit} бросков`, () => {
+        const t = throwsToClear(l, limit);
         expect(t, `кон «${l.name}» на ${n} игроков не очищается`).not.toBeNull();
       }, 120_000);
     }

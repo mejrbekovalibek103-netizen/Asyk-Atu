@@ -165,6 +165,8 @@ export interface HudSnapshot {
   remoteAiming: boolean;
   /** Онлайн: воспроизведение броска соперника ждёт данные из сети. */
   netWaiting: boolean;
+  /** Соревновательный режим: свой бросок отправлен, ждём ответ сервера («Бросок…»). В остальных режимах всегда false. */
+  throwPending: boolean;
   mode: ModeHud;
 }
 

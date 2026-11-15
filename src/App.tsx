@@ -5,7 +5,7 @@ import { LEVELS } from './game/levels/levels';
 import type { MatchConfig, RoundResult, Seat } from './game/types';
 import { applyRoundResult, emptySave, isLevelUnlocked, loadSave, writeSave, type RecordOutcome, type SaveData } from './storage/progress';
 import { clearAllRounds, clearDuelRound, clearSoloRound, loadDuelRound } from './storage/roundSave';
-import { hashToRoute, oauthReturn, routeToHash, type Route } from './ui/routes';
+import { hashToRoute, oauthReturn, routeToHash, takePendingRoute, type Route } from './ui/routes';
 import { AboutScreen } from './ui/screens/AboutScreen';
 import { GameScreen } from './ui/screens/GameScreen';
 import { HowToScreen } from './ui/screens/HowToScreen';
@@ -15,6 +15,9 @@ import { MatchSetupScreen } from './ui/screens/MatchSetupScreen';
 // онлайн-часть (и библиотека Supabase) грузится отдельным фрагментом — только когда открывается комната
 const CollectionScreen = lazy(() => import('./ui/screens/CollectionScreen').then((m) => ({ default: m.CollectionScreen })));
 const RoomScreen = lazy(() => import('./ui/screens/RoomScreen').then((m) => ({ default: m.RoomScreen })));
+// соревновательный режим «на асыки» — тоже отдельным фрагментом
+const CompetitiveSetupScreen = lazy(() => import('./ui/screens/CompetitiveLobbyScreen').then((m) => ({ default: m.CompetitiveSetupScreen })));
+const CompetitiveLobbyScreen = lazy(() => import('./ui/screens/CompetitiveLobbyScreen').then((m) => ({ default: m.CompetitiveLobbyScreen })));
 import { makeClientId, makeRoomCode } from './net/protocol';
 import { loadRoomSession, saveRoomSession } from './net/session';
 import { MenuScreen } from './ui/screens/MenuScreen';
@@ -34,6 +37,8 @@ const TITLES: Record<Route['name'], string> = {
   COLLECTION: 'Моя коллекция · Асық ату',
   MATCH: 'Матч · Асық ату',
   ROOM: 'Онлайн-матч · Асық ату',
+  COMP_SETUP: 'Матч на асыки · Асық ату',
+  COMP: 'Матч на асыки · Асық ату',
 };
 
 function LoadingPage() {
@@ -47,10 +52,14 @@ function LoadingPage() {
 }
 
 export function App() {
-  // возврат со страницы входа Google: открываем коллекцию (ошибку входа из адреса сразу убираем)
+  // возврат со страницы входа Google: открываем экран, с которого уходили на вход (например, матч на асыки
+  // по ссылке), а если его нет — коллекцию. Ошибку входа из адреса сразу убираем.
   const [oauth] = useState(() => {
     const back = oauthReturn(window.location.search, window.location.hash);
-    if (back) window.history.replaceState(null, '', (back.error ? window.location.pathname : window.location.pathname + window.location.search) + routeToHash({ name: 'COLLECTION' }));
+    if (back) {
+      const to = takePendingRoute() ?? { name: 'COLLECTION' };
+      window.history.replaceState(null, '', (back.error ? window.location.pathname : window.location.pathname + window.location.search) + routeToHash(to));
+    }
     return back;
   });
   const [route, setRoute] = useState<Route>(() => hashToRoute(window.location.hash));
@@ -234,13 +243,51 @@ export function App() {
           onCreateRoom={createRoom}
           onJoinRoom={joinRoom}
           onCollection={() => navigate({ name: 'COLLECTION' })}
+          onCompetitive={() => navigate({ name: 'COMP_SETUP' })}
           onBack={() => navigate({ name: 'MENU' })}
         />
       );
     case 'COLLECTION':
       return (
         <Suspense fallback={<LoadingPage />}>
-          <CollectionScreen authError={!!oauth?.error} onBack={() => navigate({ name: 'ONLINE_SETUP' })} />
+          <CollectionScreen
+            authError={!!oauth?.error}
+            onOpenMatch={(code) => navigate({ name: 'COMP', code })}
+            onCompetitive={() => navigate({ name: 'COMP_SETUP' })}
+            onBack={() => navigate({ name: 'ONLINE_SETUP' })}
+          />
+        </Suspense>
+      );
+    case 'COMP_SETUP':
+      return (
+        <Suspense fallback={<LoadingPage />}>
+          <CompetitiveSetupScreen
+            defaultName={save.settings.onlineName}
+            authError={!!oauth?.error}
+            onRememberName={rememberOnlineName}
+            onOpenMatch={(code) => navigate({ name: 'COMP', code })}
+            onCollection={() => navigate({ name: 'COLLECTION' })}
+            onBack={() => navigate({ name: 'ONLINE_SETUP' })}
+          />
+        </Suspense>
+      );
+    case 'COMP':
+      return (
+        <Suspense fallback={<LoadingPage />}>
+          <CompetitiveLobbyScreen
+            key={route.code}
+            code={route.code}
+            defaultName={save.settings.onlineName}
+            authError={!!oauth?.error}
+            muted={save.settings.muted}
+            reducedMotion={reducedMotion}
+            onToggleMute={toggleMute}
+            onRememberName={rememberOnlineName}
+            onOpenMatch={(code) => navigate({ name: 'COMP', code })}
+            onSetup={() => navigate({ name: 'COMP_SETUP' })}
+            onCollection={() => navigate({ name: 'COLLECTION' })}
+            onMenu={() => navigate({ name: 'MENU' })}
+          />
         </Suspense>
       );
     case 'ROOM':

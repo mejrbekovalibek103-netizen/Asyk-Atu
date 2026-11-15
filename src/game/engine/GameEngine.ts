@@ -3,12 +3,12 @@ import { KNOCKOUT_FADE_MS, PHYS, RELEASE_DELAY_MS, RESOLVE_PAUSE_MS, THROW_LINE_
 import { AimInput, type InputTarget } from '../input/AimInput';
 import { zoneCenter } from '../levels/zone';
 import { aimDirection, aimFromAnglePower, aimFromPoint, throwParams, type Aim, type ThrowParams } from '../physics/aim';
-import { PhysicsWorld, type ContactEvent, type Piece } from '../physics/PhysicsWorld';
-import type { AsykPalette } from '../render/asykShape';
+import { PhysicsWorld, type AsykState, type ContactEvent, type Piece } from '../physics/PhysicsWorld';
+import type { AsykPalette, OwnerMark } from '../render/asykShape';
 import { Effects } from '../render/effects';
 import { Renderer, type HandAnim, type SceneView } from '../render/Renderer';
-import { contactFromEvent, ThrowPlayer, ThrowRecorder, type ThrowChunk, type ThrowEnd, type ThrowStart } from '../replay/throwRecord';
-import type { Rules, RulesHost } from '../rules/Rules';
+import { contactFromEvent, REPLAY_CAPS, ThrowPlayer, ThrowRecorder, type ThrowChunk, type ThrowEnd, type ThrowStart } from '../replay/throwRecord';
+import type { CanonicalState, Rules, RulesHost } from '../rules/Rules';
 import type { HudMessage, HudSnapshot, KonLayout, Phase, Seat, TutorialStep, Vec2 } from '../types';
 
 /**
@@ -34,6 +34,38 @@ export interface EngineOptions {
   reducedMotion: boolean;
   /** Продолжить сохранённый раунд/матч (после перезагрузки страницы): кон и счёт из сохранения. Данные должны быть проверены. */
   restore?: MatchSyncState;
+  /**
+   * Кто считает бросок. 'local' (по умолчанию) — физика на этом устройстве, всё как раньше.
+   * 'server' — соревновательный режим: свой бросок уходит на сервер (`requestThrow`), а показывается запись
+   * сервера (`pushServerThrow`) тем же путём, что бросок соперника в обычном онлайне; кон и счёт выставляет
+   * состояние базы (`applyCanonical`). Правила должны уметь `parseCanonical` и `nextThrowNo` (CompetitiveRules).
+   */
+  authority?: 'local' | 'server';
+  /**
+   * 'server': игрок отпустил сақа. Ответ — запись броска (уже проверенная: parseThrowStart / Chunk / End)
+   * или null/undefined, если запись придёт отдельно (srv → `pushServerThrow`). Отказ промиса — бросок не принят:
+   * сақа возвращается в руку, вызывается `onServerThrowError`. Повторный запрос с тем же throwNo безопасен.
+   */
+  requestThrow?(req: ServerThrowRequest): Promise<ServerThrowRecord | null | void>;
+  /** 'server': comp_state на момент создания движка — кон и счёт выставляются сразу, без ожидания записи. */
+  serverState?: unknown;
+  /** Рисовать тамгу хозяина на асыках (метки берутся у правил, `ownerMarks`). В обычных режимах не нужно. */
+  ownerMarks?: boolean;
+}
+
+/** 'server': запрос своего броска. angle и power — прицел игрока до разброса (разброс добавит сервер). */
+export interface ServerThrowRequest {
+  angle: number;
+  power: number;
+  /** Номер броска: последний занятый в базе + 1. */
+  throwNo: number;
+}
+
+/** 'server': запись броска от сервера в формате обычного онлайна (start.throwIndex = номер броска). Части — по мере прихода. */
+export interface ServerThrowRecord {
+  start?: ThrowStart | null;
+  chunks?: readonly ThrowChunk[] | null;
+  end?: ThrowEnd | null;
 }
 
 /** Онлайн-матч: что движок отправляет сопернику. */
@@ -56,9 +88,29 @@ export interface EngineCallbacks {
   /** Бросок подведён, всё стоит на месте и игра продолжается: самый удобный момент сохранить раунд. */
   onCheckpoint?(state: MatchSyncState): void;
   net?: NetHooks;
+  /** 'server': бросок не принят (отказ, ошибка сети или нет ответа за SERVER_THROW_TIMEOUT_MS). Сақа снова в руке. */
+  onServerThrowError?(error: unknown, req: ServerThrowRequest): void;
 }
 
 const AIM_SEND_MS = 80;
+
+/**
+ * 'server': сколько ждать ответа на свой бросок, прежде чем вернуть сақа в руку. Запасной срок: обычно раньше
+ * приходит отказ submitThrow. Не меньше всех его попыток (net/competitive: 3 × 8 с + паузы ≈ 25 с, это проверяет
+ * тест), иначе сақа вернётся в руку, пока бросок ещё в работе. Ход — 45 с, так что 30 с укладываются.
+ */
+export const SERVER_THROW_TIMEOUT_MS = 30_000;
+/** 'server': сколько ждать запись броска, о котором база уже знает, прежде чем выставить кон без показа. */
+export const CANON_WAIT_MS = 3_000;
+/** 'server': сколько записей держать в очереди (больше не бывает: бросок за броском, у каждого свой номер). */
+const SERVER_QUEUE_MAX = 4;
+
+/** Запись серверного броска, собранная из частей (start, chunk, end могут прийти в любом порядке). */
+interface ServerRecordBuffer {
+  start: ThrowStart | null;
+  chunks: ThrowChunk[];
+  end: ThrowEnd | null;
+}
 
 interface Task {
   at: number;
@@ -127,6 +179,26 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
   /** Есть положение прицела, которое не успели отправить из-за ограничения частоты. */
   private aimDirty = false;
   private replayStalled = false;
+  /** С какого момента (игровые часы) воспроизведение ждёт данные. */
+  private stalledSince: number | null = null;
+
+  // ——— «сервер решает» (authority: 'server') ———
+  private readonly serverMode: boolean;
+  private readonly requestThrowFn: EngineOptions['requestThrow'];
+  private readonly showOwners: boolean;
+  /** Свой бросок отправлен, ждём ответ сервера. */
+  private serverWait: { req: ServerThrowRequest; aim: Aim; token: number; at: number } | null = null;
+  private serverToken = 0;
+  /** Записи серверных бросков, ещё не начатые, по номеру броска. */
+  private readonly srvQueue = new Map<number, ServerRecordBuffer>();
+  /** Номер броска, запись которого сейчас проигрывается. */
+  private srvPlaying: number | null = null;
+  /** Наибольший номер броска, который уже показан или выставлен по базе: записи с номером не больше — повтор. */
+  private srvDone = 0;
+  /** Состояние базы, ждущее конца показа броска (или прихода его записи). */
+  private canon: CanonicalState | null = null;
+  /** С какого момента ждём запись броска, о котором база уже знает. */
+  private recordWaitSince: number | null = null;
 
   private raf = 0;
   private lastNow = 0;
@@ -142,6 +214,9 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
   ) {
     this.layout = opts.layout;
     this.rules = opts.rules;
+    this.serverMode = opts.authority === 'server';
+    this.requestThrowFn = opts.requestThrow;
+    this.showOwners = !!opts.ownerMarks;
     this.tutorialPending = opts.tutorial;
     this.tutorialStep = opts.tutorial ? 'grab' : null;
     this.effects = new Effects(opts.reducedMotion);
@@ -157,6 +232,11 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
     }
     this.input = new AimInput(canvas, (x, y) => this.renderer.screenToWorld(x, y), this);
     this.snapshot = this.buildSnapshot();
+    if (this.serverMode && opts.serverState !== undefined) {
+      // матч уже идёт (переподключение): кон и счёт — сразу из базы, запись прошлого броска не ждём
+      const st = this.rules.parseCanonical?.(opts.serverState);
+      if (st) this.applyCanonNow(st);
+    }
     // шрифты для надписей мелом на фоне
     document.fonts?.ready.then(() => this.renderer.invalidateBackground()).catch(() => undefined);
   }
@@ -171,6 +251,8 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
 
   destroy(): void {
     this.destroyed = true;
+    this.serverWait = null;
+    this.srvQueue.clear();
     cancelAnimationFrame(this.raf);
     this.input.destroy();
     this.physics.destroy();
@@ -210,6 +292,11 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
     this.remoteAim = null;
     this.recorder = null;
     this.player = null;
+    this.serverWait = null;
+    this.srvPlaying = null;
+    this.srvQueue.clear();
+    this.canon = null;
+    this.recordWaitSince = null;
     this.aimSource = null;
     this.trail = [];
     this.message = null;
@@ -251,11 +338,33 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
   get aim(): Aim | null {
     if (this.phase === 'AIMING') return this.localAim;
     if (this.phase === 'READY') return this.remoteAim;
+    // 'server': пока сервер считает бросок, рука держит замах, а пунктир показывает отправленный прицел
+    if (this.serverWait && this.phase === 'THROWING') return this.serverWait.aim;
     return null;
   }
 
   get localTurn(): boolean {
-    return this.rules.canThrow();
+    return this.canThrowNow();
+  }
+
+  /** Тамга хозяина на асыках — только с опцией ownerMarks. */
+  get ownerMarks(): readonly (OwnerMark | null)[] | null {
+    return this.showOwners ? (this.rules.ownerMarks?.() ?? null) : null;
+  }
+
+  /**
+   * Может ли этот экран сейчас начать бросок. В обычном режиме — ровно `rules.canThrow()`.
+   * 'server': ещё и не ждём ответ на свой бросок, ничего не проигрываем, и база уже знает обо всех показанных
+   * бросках (иначе бросок ушёл бы со старым номером).
+   */
+  private canThrowNow(): boolean {
+    if (!this.rules.canThrow()) return false;
+    if (!this.serverMode) return true;
+    return !this.serverWait && !this.canon && this.srvPlaying === null && this.srvDone < (this.rules.nextThrowNo?.() ?? 0);
+  }
+
+  private blockedHintNow(): string {
+    return this.serverMode && this.rules.canThrow() ? 'Ждём сервер…' : this.rules.blockedHint();
   }
 
   get sakaPalette(): AsykPalette {
@@ -298,14 +407,16 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
     sound.unlock();
     if (this.paused) return false;
     if (this.phase !== 'READY') {
+      // 'server': бросок уже отправлен — второе нажатие ничего не делает (интерфейс показывает «Бросок…»)
+      if (this.serverWait) return false;
       if ((this.phase === 'THROWING' || this.phase === 'RESOLVING') && !this.waitHintShown) {
         this.waitHintShown = true;
         this.say('Дождись, пока всё остановится', 'info', 1200);
       }
       return false;
     }
-    if (!this.rules.canThrow()) {
-      this.say(this.rules.blockedHint(), 'info', 1600);
+    if (!this.canThrowNow()) {
+      this.say(this.blockedHintNow(), 'info', 1600);
       return false;
     }
     if (!this.inGrabArea(p)) {
@@ -326,7 +437,7 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
 
   pointerMove(p: Vec2, pressed: boolean): void {
     if (!pressed) {
-      const hover = this.phase === 'READY' && !this.paused && this.rules.canThrow() && this.inGrabArea(p);
+      const hover = this.phase === 'READY' && !this.paused && this.canThrowNow() && this.inGrabArea(p);
       if (hover !== this.hoverGrab) this.hoverGrab = hover;
       return;
     }
@@ -350,7 +461,7 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
   keyAim(dAngle: number, dPower: number): void {
     if (this.paused) return;
     if (this.phase === 'READY') {
-      if (!this.rules.canThrow()) return;
+      if (!this.canThrowNow()) return;
       if (!this.setPhase('AIMING')) return;
       this.rules.onAim?.();
       this.aimSource = 'keyboard';
@@ -404,6 +515,7 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
       }
       if (steps >= 24) this.accumulator = 0;
       this.runTasks();
+      if (this.serverMode) this.serverTick();
       // таймер испытания со временем: интерфейс обновляется раз в секунду; вышло время при сақа в руке — раунд окончен
       if (this.phase !== 'ROUND_COMPLETE' && this.rules.tick?.(dt)) this.emit();
       if ((this.phase === 'READY' || this.phase === 'AIMING') && this.rules.timeIsUp?.()) this.finishByTime();
@@ -460,6 +572,11 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
 
   /** Соперник отпустил сақа: показываем выброс его руки, дальше проигрываем запись. */
   remoteThrowStart(start: ThrowStart): void {
+    // 'server': это запись сервера — в том числе своего броска; номер броска берётся из самой записи
+    if (this.serverMode) {
+      this.pushServerThrow(start.throwIndex, { start });
+      return;
+    }
     if (this.phase !== 'READY' || this.rules.canThrow()) return;
     if (!this.setPhase('THROWING')) return;
     this.remoteAim = null;
@@ -492,6 +609,8 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
   private startReplay(start: ThrowStart): void {
     if (this.phase !== 'THROWING' || !this.player || this.launched) return;
     this.currentThrow = this.rules.onLaunch();
+    // 'server': номер броска — из записи сервера (он же номер в базе)
+    if (this.serverMode) this.currentThrow = start.throwIndex;
     this.physics.launchSaka(THROW_ORIGIN, start.angle, 0, 0);
     this.sakaLaunchedAt = this.physics.time;
     this.launched = true;
@@ -514,6 +633,7 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
     const stalled = !player.canAdvance();
     if (stalled !== this.replayStalled) {
       this.replayStalled = stalled;
+      this.stalledSince = stalled ? this.clock : null;
       this.emit(); // интерфейс покажет «связь…», если данные задерживаются
     }
     if (stalled) return;
@@ -538,6 +658,11 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
     const end = this.player?.ended;
     if (!end) return;
     this.player = null;
+    this.stalledSince = null;
+    if (this.srvPlaying !== null) {
+      this.srvDone = Math.max(this.srvDone, this.srvPlaying);
+      this.srvPlaying = null;
+    }
     // итоговое состояние соперника — истина: досчитываем выбитые, которых не было в событиях
     for (const [i, , , , inZone] of end.final) if (!inZone) this.knockRemote(i);
     this.physics.importAsyks(end.final, this.layout.asyks, false);
@@ -591,6 +716,269 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
     return true;
   }
 
+  // ——— «сервер решает» (authority: 'server', соревновательный режим) ———
+
+  /**
+   * Запись серверного броска — часть (srv: start / chunk / end) или весь ответ на свой бросок.
+   * Части проверяет вызывающий (net/validate: parseThrowStart, parseThrowChunk, parseThrowEnd).
+   * Повторы и уже показанные номера отбрасываются; запись «наперёд» ждёт, пока движок освободится.
+   * Проигрывается тем же путём, что бросок соперника в обычном онлайне (ThrowPlayer → finishReplay).
+   */
+  pushServerThrow(throwNo: number, part: ServerThrowRecord): void {
+    if (!this.serverMode || this.destroyed || !Number.isInteger(throwNo) || throwNo < 1) return;
+    if (throwNo <= this.srvDone) return; // уже показан или выставлен по базе
+    const start = part.start && part.start.throwIndex === throwNo ? part.start : null;
+    const chunks = part.chunks ?? [];
+    const end = part.end ?? null;
+    if (throwNo === this.srvPlaying && this.player) {
+      for (const c of chunks) this.player.push(c);
+      if (end) this.player.end(end);
+      return;
+    }
+    let buf = this.srvQueue.get(throwNo);
+    if (!buf) {
+      if (this.srvQueue.size >= SERVER_QUEUE_MAX || throwNo > this.srvDone + 100) return;
+      buf = { start: null, chunks: [], end: null };
+      this.srvQueue.set(throwNo, buf);
+    }
+    if (start && !buf.start) buf.start = start;
+    for (const c of chunks) if (buf.chunks.length < REPLAY_CAPS.maxPending) buf.chunks.push(c);
+    if (end && !buf.end) buf.end = end;
+    this.tryStartServerReplay();
+  }
+
+  /**
+   * Состояние матча из базы (ответ comp_state) — истина: кон, счёт, чей ход, конец матча.
+   * Пока проигрывается бросок (или его запись вот-вот придёт), состояние ждёт конца показа, чтобы кон не
+   * «прыгал». Если запись броска, о котором база уже знает, не пришла за CANON_WAIT_MS — кон выставляется сразу,
+   * без анимации. Асыки, которые уже стоят как в базе, не трогаются.
+   * false — состояние не принято (не режим 'server', мусор, чужой матч, устарело).
+   */
+  applyCanonical(compState: unknown): boolean {
+    if (!this.serverMode || this.destroyed) return false;
+    const st = this.rules.parseCanonical?.(compState);
+    if (!st) return false;
+    const known = (this.rules.nextThrowNo?.() ?? 1) - 1;
+    // старее уже показанного броска (ответ на запрос, ушедший до записи броска): иначе выбитые «воскреснут»
+    if (st.throwNo < known || st.throwNo < this.srvDone || (this.canon && st.throwNo < this.canon.throwNo)) return false;
+    if (this.srvPlaying !== null && st.throwNo < this.srvPlaying) return false;
+    this.canon = st;
+    if (this.phase === 'ROUND_COMPLETE' || this.canonBlocker(st, false) === 'none') this.applyCanonNow(st);
+    else this.emit(); // бросать нельзя, пока база и экран не сойдутся
+    return true;
+  }
+
+  /** Номер последнего броска, который этот экран показал или выставил по базе. */
+  get serverThrowsDone(): number {
+    return this.srvDone;
+  }
+
+  private requestServerThrow(aim: Aim): void {
+    const fn = this.requestThrowFn;
+    const throwNo = this.rules.nextThrowNo?.() ?? 0;
+    if (!fn || throwNo < 1 || !this.canThrowNow()) {
+      this.cancelAim(false);
+      this.say(fn ? this.blockedHintNow() : 'Бросок сейчас недоступен', 'warn', 1800);
+      return;
+    }
+    if (!this.setPhase('THROWING')) return;
+    this.lastAngle = aim.angle;
+    this.lastPower = aim.power;
+    this.aimSource = null;
+    this.launched = false;
+    this.waitHintShown = false;
+    this.localAim = null;
+    // прицел уходит как есть, без округления: сервер проверяет предел угла по тем же числам
+    const req: ServerThrowRequest = { angle: aim.angle, power: aim.power, throwNo };
+    const token = ++this.serverToken;
+    this.serverWait = { req, aim, token, at: this.clock };
+    this.emit();
+    let reply: Promise<ServerThrowRecord | null | void>;
+    try {
+      reply = Promise.resolve(fn(req));
+    } catch (e) {
+      reply = Promise.reject(e);
+    }
+    reply.then(
+      // запись принимается и после таймаута: сервер бросок засчитал — его надо показать
+      (rec) => {
+        if (rec && !this.destroyed) this.pushServerThrow(throwNo, rec);
+      },
+      (err) => {
+        if (this.serverWait?.token === token) this.failServerThrow(err);
+      },
+    );
+  }
+
+  /** Бросок не принят: сақа обратно в руку, прицел можно взять снова (с того же угла и силы). */
+  private failServerThrow(err: unknown): void {
+    const w = this.serverWait;
+    if (!w) return;
+    this.serverWait = null;
+    if (this.phase === 'THROWING' && !this.player) this.backToHand();
+    this.say('Бросок не прошёл — брось ещё раз', 'warn', 2400);
+    this.cb.onServerThrowError?.(err, w.req);
+    this.emit();
+    this.serverResume();
+  }
+
+  /** Вернуть сақа в руку без показа броска (ответа нет, или бросок уже выставлен по базе). */
+  private backToHand(): void {
+    if (this.srvPlaying !== null) this.srvDone = Math.max(this.srvDone, this.srvPlaying);
+    this.srvPlaying = null;
+    this.serverWait = null;
+    this.player = null;
+    this.launched = false;
+    this.replayStalled = false;
+    this.stalledSince = null;
+    this.release = null;
+    this.localAim = null;
+    this.aimSource = null;
+    this.trail = [];
+    this.physics.removeSaka();
+    this.phase = 'READY';
+    this.hand.sakaInHand = true;
+    this.hand.reload = 0;
+  }
+
+  /** Начать следующую запись из очереди, если движок свободен. */
+  private tryStartServerReplay(): void {
+    if (this.player || this.srvPlaying !== null) return;
+    if (this.phase === 'RESOLVING' || this.phase === 'ROUND_COMPLETE') return;
+    for (const no of [...this.srvQueue.keys()]) if (no <= this.srvDone) this.srvQueue.delete(no);
+    let next: number | null = null;
+    for (const [no, b] of this.srvQueue) if (b.start && (next === null || no < next)) next = no;
+    if (next === null) return;
+    const own = this.serverWait;
+    if (this.phase === 'THROWING') {
+      // бросок уже идёт только в одном случае — ждём ответ на свой: подходит лишь его запись
+      if (!own || own.req.throwNo !== next) return;
+    } else if (this.phase === 'AIMING') {
+      // бросок с этим номером уже сделан (например, с другой вкладки): прицел больше не нужен
+      this.cancelAim(false);
+    }
+    const buf = this.srvQueue.get(next)!;
+    this.srvQueue.delete(next);
+    this.serverWait = null;
+    this.srvPlaying = next;
+    const player = this.beginServerReplay(buf.start!, !!own);
+    if (!player) {
+      this.srvPlaying = null;
+      return;
+    }
+    for (const c of buf.chunks) player.push(c);
+    if (buf.end) player.end(buf.end);
+  }
+
+  /** Выброс руки и запуск воспроизведения записи сервера (как remoteThrowStart в обычном онлайне). */
+  private beginServerReplay(start: ThrowStart, own: boolean): ThrowPlayer | null {
+    if (!own && !this.setPhase('THROWING')) return null;
+    this.remoteAim = null;
+    const player = new ThrowPlayer(start);
+    this.player = player;
+    this.launched = false;
+    this.replayStalled = false;
+    this.stalledSince = null;
+    // свой бросок: рука срывается из замаха, в котором ждала ответ; чужой — как в обычном онлайне
+    this.release = own
+      ? { at: this.clock, from: this.hand.offset, lift: this.hand.lift }
+      : { at: this.clock, from: -start.power * HAND_PULL, lift: handLift(start.power) };
+    this.hand.angle = start.angle;
+    sound.throw(start.power);
+    this.schedule(RELEASE_DELAY_MS, () => {
+      if (this.player === player) this.startReplay(start);
+    });
+    this.emit();
+    return player;
+  }
+
+  /**
+   * Что мешает применить состояние базы прямо сейчас:
+   * 'busy' — движок занят и сам применит его, когда освободится; 'replay' — идёт показ броска;
+   * 'record' — база знает о броске, запись которого ещё не пришла (ждём не дольше CANON_WAIT_MS).
+   */
+  private canonBlocker(st: CanonicalState, inResolve: boolean): 'none' | 'busy' | 'replay' | 'record' {
+    if (this.phase === 'RESOLVING' && !inResolve) return 'busy';
+    if (this.player || this.srvPlaying !== null) return 'replay';
+    const w = this.serverWait;
+    if (w) return w.req.throwNo <= st.throwNo ? 'record' : 'busy';
+    for (const [no, b] of this.srvQueue) if (b.start && no > this.srvDone && no <= st.throwNo) return 'record';
+    if (st.recordExpected && st.throwNo > this.srvDone) return 'record';
+    return 'none';
+  }
+
+  /** Каждый кадр (режим 'server'): сроки ожидания ответа сервера и записи броска. */
+  private serverTick(): void {
+    const w = this.serverWait;
+    if (w && this.clock - w.at >= SERVER_THROW_TIMEOUT_MS) this.failServerThrow(new Error('timeout'));
+    const st = this.canon;
+    if (!st) return;
+    const b = this.canonBlocker(st, false);
+    if (b === 'none') {
+      this.applyCanonNow(st);
+      return;
+    }
+    if (b === 'record') {
+      this.recordWaitSince ??= this.clock;
+      if (this.clock - this.recordWaitSince >= CANON_WAIT_MS) this.applyCanonNow(st);
+      return;
+    }
+    this.recordWaitSince = null;
+    // запись застряла (часть потерялась): дольше ждать незачем — итог этого броска база уже знает
+    const stuck = b === 'replay' && this.stalledSince !== null && this.clock - this.stalledSince >= CANON_WAIT_MS;
+    if (stuck && this.srvPlaying !== null && this.srvPlaying <= st.throwNo) this.applyCanonNow(st);
+  }
+
+  /** Движок освободился: применить ждущее состояние базы и начать следующую запись. */
+  private serverResume(): void {
+    if (this.canon && this.canonBlocker(this.canon, false) === 'none') this.applyCanonNow(this.canon);
+    this.tryStartServerReplay();
+  }
+
+  private applyCanonNow(st: CanonicalState): void {
+    this.canon = null;
+    this.recordWaitSince = null;
+    // пока ждало, экран показал более поздний бросок: состояние устарело, кон и счёт не трогаем
+    if (st.throwNo < this.srvDone) {
+      this.tryStartServerReplay();
+      return;
+    }
+    // бросок, итог которого база уже знает, не показан (запись не пришла или застряла) — выставляем итог
+    if (this.phase === 'THROWING') this.backToHand();
+    this.srvDone = Math.max(this.srvDone, st.throwNo);
+    for (const no of [...this.srvQueue.keys()]) if (no <= this.srvDone) this.srvQueue.delete(no);
+    if (this.phase !== 'ROUND_COMPLETE') this.syncKon(st.kon);
+    this.rules.importState?.(st.rules);
+    if (this.rules.canThrow()) this.remoteAim = null;
+    if (this.phase === 'AIMING' && !this.canThrowNow()) this.cancelAim(false);
+    if (this.phase === 'READY' && this.rules.isOver?.() && this.setPhase('ROUND_COMPLETE')) this.rules.onFinish();
+    this.emit();
+    this.tryStartServerReplay();
+  }
+
+  /**
+   * Выставить кон ровно как в базе, без анимации, трогая только асыки, которые расходятся.
+   * null — исходная раскладка. Лишний асык в коне растворяется (как выбитый), недостающий возвращается.
+   */
+  private syncKon(kon: AsykState[] | null): void {
+    const n = this.layout.asyks.length;
+    const target: AsykState[] = kon ?? this.layout.asyks.map((a, i): AsykState => [i, a.x, a.y, a.angle ?? 0, 1]);
+    const cur = this.physics.exportAsyks(n);
+    const move: AsykState[] = [];
+    for (const t of target) {
+      const c = cur[t[0]];
+      if (!c) continue;
+      if (t[4] === 0) {
+        const p = c[4] === 1 ? this.physics.pieceByIndex(t[0]) : undefined;
+        if (p) this.physics.markOut(p, this.currentThrow);
+        continue;
+      }
+      const off = c[4] !== 1 || Math.abs(c[1] - t[1]) > 0.05 || Math.abs(c[2] - t[2]) > 0.05 || Math.abs(c[3] - t[3]) > 0.005;
+      if (off) move.push(t);
+    }
+    if (move.length) this.physics.importAsyks(move, this.layout.asyks, true);
+  }
+
   private sendAim(force: boolean): void {
     const net = this.cb.net;
     if (!net || !this.localAim) return;
@@ -611,6 +999,10 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
     if (this.phase !== 'AIMING' || !aim) return;
     if (!aim.valid) {
       this.cancelAim(true);
+      return;
+    }
+    if (this.serverMode) {
+      this.requestServerThrow(aim);
       return;
     }
     if (!this.setPhase('THROWING')) return;
@@ -693,6 +1085,8 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
     const saka = this.physics.saka;
     if (saka) this.effects.dust(saka.body.position.x, saka.body.position.y, 3, 'rgba(230,220,200,1)');
     this.physics.removeSaka();
+    // 'server': состояние базы, пришедшее во время показа, применяем до решения «что дальше» — конец матча решает база
+    if (this.serverMode && this.canon && this.canonBlocker(this.canon, true) === 'none') this.applyCanonNow(this.canon);
 
     const step = this.rules.next();
     switch (step.kind) {
@@ -716,6 +1110,7 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
         break;
     }
     this.emit();
+    if (this.serverMode) this.serverResume();
   }
 
   // ——— события физики ———
@@ -847,6 +1242,7 @@ export class GameEngine implements SceneView, InputTarget, RulesHost {
       message: this.message,
       remoteAiming: this.phase === 'READY' && !!this.remoteAim,
       netWaiting: !!this.player && this.launched && this.replayStalled,
+      throwPending: !!this.serverWait,
       mode: this.rules.hud(),
     };
   }

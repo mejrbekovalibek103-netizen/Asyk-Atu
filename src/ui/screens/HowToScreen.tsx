@@ -142,6 +142,24 @@ export function HowToScreen({ onNavigate, onBack }: { onNavigate: (r: Route) => 
           </ul>
         </section>
 
+        <section className="doc__section">
+          <h2>Матч на асыки</h2>
+          <ul className="bullets">
+            <li>
+              <b>Нужен вход через Google</b> и 5 свободных асыков. Новый игрок получает 10. Пока только вдвоём.
+            </li>
+            <li>
+              <b>Ставка:</b> каждый ставит в кон 5 асыков. Что выбьешь — твоё, даже чужое. Невыбитые вернутся хозяину.
+            </li>
+            <li>
+              <b>Бросок считает сервер</b>, так что подделать его нельзя. По 15 бросков на каждого, на ход — 45 секунд.
+            </li>
+            <li>
+              <b>Ушёл — ставка осталась:</b> асыки сдавшегося или ушедшего остаются в коне, его ходы пропускаются.
+            </li>
+          </ul>
+        </section>
+
         <section className="doc__section doc__note">
           <Ornament className="doc__ornament" />
           <h2>Это цифровая адаптация</h2>

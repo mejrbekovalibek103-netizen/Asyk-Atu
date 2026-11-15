@@ -1,5 +1,5 @@
-import type { Piece } from '../physics/PhysicsWorld';
-import type { AsykPalette } from '../render/asykShape';
+import type { AsykState, Piece } from '../physics/PhysicsWorld';
+import type { AsykPalette, OwnerMark } from '../render/asykShape';
 import type { Effects } from '../render/effects';
 import type { HudMessage, KonLayout, ModeHud, Seat, Vec2 } from '../types';
 
@@ -16,6 +16,21 @@ export interface RulesHost {
 }
 
 /** Что делать после того, как бросок подведён. */
+/**
+ * «Сервер решает» (соревновательный режим): каноническое состояние матча из базы, разобранное правилами.
+ * Движок по нему выставляет кон (`applyCanonical`) и передаёт `rules` обратно в `importState`.
+ */
+export interface CanonicalState {
+  /** Номер последнего занятого броска (бросок, пропуск или сдача). */
+  throwNo: number;
+  /** Кон после этого броска; null — исходная раскладка. */
+  kon: AsykState[] | null;
+  /** Последний номер — настоящий бросок: его запись (srv) ещё может прийти, и её стоит дождаться. */
+  recordExpected: boolean;
+  /** Что передать в `importState`. */
+  rules: unknown;
+}
+
 export type NextStep =
   /** следующий бросок (того же или другого игрока — решают правила) */
   | { kind: 'continue' }
@@ -84,4 +99,10 @@ export interface Rules {
   /** Состояние счёта для синхронизации онлайн-матча (после переподключения). */
   exportState?(): unknown;
   importState?(state: unknown): void;
+  /** «Сервер решает»: разобрать состояние из базы. null — мусор или чужой матч (движок его не применяет). */
+  parseCanonical?(raw: unknown): CanonicalState | null;
+  /** «Сервер решает»: номер, под которым уйдёт следующий бросок этого экрана (последний занятый + 1). */
+  nextThrowNo?(): number;
+  /** Тамга хозяина по номеру асыка в раскладке; null — меток нет. Рисуется, только если движку дали `ownerMarks`. */
+  ownerMarks?(): readonly (OwnerMark | null)[] | null;
 }

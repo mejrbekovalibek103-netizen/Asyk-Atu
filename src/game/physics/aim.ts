@@ -68,12 +68,15 @@ export interface ThrowParams {
 /**
  * Превращает прицел в реальные параметры броска.
  * Добавляет небольшой «человеческий» разброс: чем сильнее бросок, тем чуть больше отклонение.
+ * `jitterScale` — во сколько раз разброс угла и силы шире обычного (соревновательный режим: COMP_JITTER_SCALE).
+ * При jitterScale = 1 числа ровно те же, что и без этого параметра; случайных чисел берётся столько же (3).
  */
-export function throwParams(aim: Aim, rng: () => number = Math.random, jitter = true): ThrowParams {
-  const sigma = THROW_JITTER.angleMin + (THROW_JITTER.angleMax - THROW_JITTER.angleMin) * aim.power;
+export function throwParams(aim: Aim, rng: () => number = Math.random, jitter = true, jitterScale = 1): ThrowParams {
+  const sigma = (THROW_JITTER.angleMin + (THROW_JITTER.angleMax - THROW_JITTER.angleMin) * aim.power) * jitterScale;
   const dAngle = jitter ? clamp(gaussian(rng) * sigma, -2.5 * sigma, 2.5 * sigma) : 0;
-  const dPower = jitter ? (rng() * 2 - 1) * THROW_JITTER.power : 0;
-  const slide = clamp(aim.slide * (1 + dPower), PHYS.minSlide, PHYS.maxSlide * 1.02);
+  const dPower = jitter ? (rng() * 2 - 1) * THROW_JITTER.power * jitterScale : 0;
+  // верхний предел растёт вместе с разбросом (при jitterScale = 1 — прежние 1,02)
+  const slide = clamp(aim.slide * (1 + dPower), PHYS.minSlide, PHYS.maxSlide * (1 + 0.02 * jitterScale));
   return {
     angle: aim.angle + dAngle,
     speed: speedForDistance(slide, PHYS.decel.saka),

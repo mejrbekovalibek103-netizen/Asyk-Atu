@@ -1,3 +1,4 @@
+import { COMP_STAKE } from '../config';
 import type { AsykSpawn, KonLayout, Obstacle, Zone } from '../types';
 import { getLevel } from './levels';
 
@@ -256,3 +257,87 @@ export function getMatchLayout(id: string, players = 2): KonLayout {
   if (g) return growingFor(g, clampPlayers(players));
   return FIXED_LAYOUTS.find((l) => l.id === id) ?? FIXED_LAYOUTS[0];
 }
+
+// ——— коны соревновательного режима «на асыки» ———
+
+/**
+ * Кон соревновательного матча собирается из ставок: каждый игрок ставит COMP_STAKE асыков, поэтому в коне ровно
+ * COMP_STAKE × число игроков асыков (10 / 15 / 20). Номер асыка в раскладке (Piece.index) — это «слот», к которому
+ * база привязывает поставленный асык (comp_stakes.slot). Раскладка строится детерминированно из id и числа игроков:
+ * её одинаково строят сервер (Edge Function) и все браузеры. Любое изменение здесь — повод поднять SIM_VERSION.
+ */
+export const STAKE_LAYOUT_IDS = ['stake-line', 'stake-scatter', 'stake-ring'] as const;
+export type StakeLayoutId = (typeof STAKE_LAYOUT_IDS)[number];
+
+/** Шаг асыков в линии — как в «Большом коне». */
+const STAKE_LINE_PITCH = 59;
+
+/** Ряд из k асыков с шагом STAKE_LINE_PITCH по центру двора; shift — сдвиг ряда (шахматный порядок). */
+function lineRow(k: number, y: number, shift = 0): { x: number; y: number }[] {
+  return Array.from({ length: k }, (_, i) => ({ x: 400 + (i - (k - 1) / 2) * STAKE_LINE_PITCH + shift, y }));
+}
+
+const STAKE_DEFS: GrowingLayout[] = [
+  {
+    id: 'stake-line',
+    name: 'Линия',
+    kazName: 'Сызық',
+    description: 'Асыки в ряд поперёк кона — как во дворе.',
+    build: (n) => {
+      // 10 в ряд у двоих; 8 + 7 у троих; 10 + 10 у четверых (второй ряд — в шахматном порядке)
+      const rows = { 2: [10], 3: [8, 7], 4: [10, 10] }[n];
+      const pts = rows.length === 1 ? lineRow(rows[0], 420) : [...lineRow(rows[0], 388, -STAKE_LINE_PITCH / 4), ...lineRow(rows[1], 453, STAKE_LINE_PITCH / 4)];
+      const asyks = numbered(pts);
+      return { zone: rectAround(asyks, PAD), asyks };
+    },
+  },
+  {
+    id: 'stake-scatter',
+    name: 'Рассыпь',
+    kazName: 'Шашылған',
+    description: 'Асыки стоят врозь — почти каждый требует своего удара.',
+    build: (n) => {
+      const asyks = scattered(COMP_STAKE * n);
+      return { zone: rectAround(asyks, PAD), asyks };
+    },
+  },
+  {
+    id: 'stake-ring',
+    name: 'Кольцо',
+    kazName: 'Шеңбер',
+    description: 'Асыки кольцом в круге. Бей сквозь кольцо — заденешь дальних.',
+    build: (n) => {
+      const r = { 2: 150, 3: 170, 4: 190 }[n];
+      const cx = 400;
+      const cy = 430;
+      return { zone: { kind: 'circle', cx, cy, r: r + 62 }, asyks: numbered(ring(COMP_STAKE * n, cx, cy, r)) };
+    },
+  },
+];
+
+const stakeCache = new Map<string, KonLayout>();
+
+/** Это кон соревновательного режима. */
+export function isStakeLayout(id: unknown): id is StakeLayoutId {
+  return typeof id === 'string' && (STAKE_LAYOUT_IDS as readonly string[]).includes(id);
+}
+
+/**
+ * Кон соревновательного матча для 2–4 игроков: ровно COMP_STAKE × players асыков.
+ * Неизвестный id или неверное число игроков — ошибка (сервер не должен «угадывать» кон).
+ */
+export function getStakeLayout(id: string, players: number): KonLayout {
+  const def = STAKE_DEFS.find((d) => d.id === id);
+  if (!def || !isStakeLayout(id)) throw new Error(`неизвестный кон соревновательного режима: ${String(id)}`);
+  if (players !== 2 && players !== 3 && players !== 4) throw new Error(`неверное число игроков: ${String(players)}`);
+  const key = `${id}:${players}`;
+  let layout = stakeCache.get(key);
+  if (!layout) {
+    layout = { id: def.id, name: def.name, kazName: def.kazName, description: def.description, ...def.build(players) };
+    stakeCache.set(key, layout);
+  }
+  return layout;
+}
+
+/** Коны соревновательного режима для выбора (в виде для двоих). */
+export const STAKE_LAYOUTS: KonLayout[] = STAKE_LAYOUT_IDS.map((id) => getStakeLayout(id, 2));

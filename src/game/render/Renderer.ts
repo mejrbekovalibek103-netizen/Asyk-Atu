@@ -3,7 +3,7 @@ import { aimDirection, type Aim } from '../physics/aim';
 import { distanceToObstruction } from '../physics/clip';
 import type { Piece } from '../physics/PhysicsWorld';
 import type { KonLayout, Phase, Vec2 } from '../types';
-import type { AsykPalette } from './asykShape';
+import { TAMGA_DOTS, type AsykPalette, type OwnerMark } from './asykShape';
 import { drawCourtyard, type VisibleRect } from './background';
 import type { Effects } from './effects';
 import { drawHandBack, drawHandFingers, drawHandShadow } from './hand';
@@ -45,6 +45,11 @@ export interface SceneView {
   readonly showGrabHint: boolean;
   /** Сейчас может бросать этот экран (в онлайне — только в свой ход). */
   readonly localTurn: boolean;
+  /**
+   * Соревновательный режим: тамга хозяина на каждом асыке, по номеру асыка в раскладке (= слот кона).
+   * null/нет — меток нет (все обычные режимы).
+   */
+  readonly ownerMarks?: readonly (OwnerMark | null)[] | null;
 }
 
 export interface Camera {
@@ -172,6 +177,7 @@ export class Renderer {
 
   private drawPieces(ctx: CanvasRenderingContext2D, v: SceneView): void {
     const t = v.clock;
+    const marks = v.ownerMarks ?? null;
     for (const p of v.pieces) {
       if (p.kind === 'saka') continue;
       let alpha = 1;
@@ -184,6 +190,8 @@ export class Renderer {
       const angle = p.body.angle + (wob > 0 ? Math.sin(t * 0.09 + p.id * 1.7) * wob * 0.1 : 0);
       drawAsykShadow(ctx, x, y, p.body.angle, ASYK_W, ASYK_H, alpha);
       drawAsyk(ctx, x, y, angle, ASYK_W, ASYK_H, p.kind === 'target' ? 'target' : 'bone', p.face, alpha, 1 + wob * 0.05);
+      const mark = marks && p.index >= 0 ? marks[p.index] : null;
+      if (mark) drawTamga(ctx, x, y, angle, mark, alpha);
 
       if (p.kind === 'target' && p.status === 'in') {
         const pulse = (Math.sin(t * 0.005) + 1) / 2;
@@ -378,6 +386,36 @@ export class Renderer {
       ctx.restore();
     }
   }
+}
+
+/** Радиус тамги и раскладки её точек, единицы мира (асык 54×38 — метка помещается в середине). */
+const TAMGA_R = 8.5;
+const TAMGA_DOT_SPREAD = 3.7;
+const TAMGA_DOT_R = 1.7;
+
+/**
+ * Тамга хозяина: плоский кружок цвета игрока с тёмной каймой и белыми точками (1–4), поворачивается вместе
+ * с асыком — как выжженная метка на кости.
+ */
+function drawTamga(ctx: CanvasRenderingContext2D, x: number, y: number, angle: number, mark: OwnerMark, alpha: number): void {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.arc(0, 0, TAMGA_R, 0, Math.PI * 2);
+  ctx.fillStyle = mark.color;
+  ctx.fill();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(40, 30, 20, 0.6)';
+  ctx.stroke();
+  ctx.fillStyle = '#fffaf0';
+  for (const [dx, dy] of TAMGA_DOTS[mark.dots]) {
+    ctx.beginPath();
+    ctx.arc(dx * TAMGA_DOT_SPREAD, dy * TAMGA_DOT_SPREAD, TAMGA_DOT_R, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 function mix(a: number[], b: number[], t: number): number[] {

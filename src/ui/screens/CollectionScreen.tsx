@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { signInWithGoogle, signOut, useAccount } from '../../net/account';
-import { canStake, STAKE_SIZE } from '../../net/collection';
+import { canStake, freeCount, lockedMatches, STAKE_SIZE } from '../../net/collection';
+import { compState, isCompOver } from '../../net/competitive';
 import { AsykIcon } from '../components/AsykIcon';
 import { GoogleIcon } from '../components/GoogleIcon';
 import { Icon } from '../components/Icon';
@@ -9,7 +10,49 @@ import { plural } from '../format';
 interface Props {
   /** Google вернул игрока с ошибкой (например, он закрыл окно входа). */
   authError: boolean;
+  /** Открыть матч на асыки по коду (асыки игрока стоят в его коне). */
+  onOpenMatch: (code: string) => void;
+  /** К соревновательному режиму (#/comp). */
+  onCompetitive: () => void;
   onBack: () => void;
+}
+
+/** Матч, в коне которого стоят асыки игрока: код для ссылки и идёт ли он ещё. */
+interface LockedMatch {
+  id: string;
+  code: string | null;
+  live: boolean;
+}
+
+/** «3 асыка стоят» — сколько асыков игрока в коне этого матча. */
+function inKon(list: readonly { locked: string | null }[], id: string): string {
+  const n = list.filter((a) => a.locked === id).length;
+  return `${n} ${plural(n, ['асык стоит', 'асыка стоят', 'асыков стоят'])}`;
+}
+
+/** По id матчей (asyks.locked_match) узнаём их коды у базы — так получается ссылка «Открыть матч». */
+function useLockedMatches(ids: string[]): LockedMatch[] {
+  const key = ids.slice(0, 3).join(',');
+  const [list, setList] = useState<LockedMatch[]>([]);
+  useEffect(() => {
+    const wanted = key ? key.split(',') : [];
+    setList(wanted.map((id) => ({ id, code: null, live: true })));
+    if (!wanted.length) return;
+    let alive = true;
+    void Promise.all(
+      wanted.map((id) =>
+        compState(id)
+          .then((st): LockedMatch => ({ id, code: st.match.joinCode, live: !isCompOver(st.match.status) }))
+          .catch((): LockedMatch => ({ id, code: null, live: true })),
+      ),
+    ).then((found) => {
+      if (alive) setList(found);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [key]);
+  return list;
 }
 
 const ERRORS = {
@@ -19,10 +62,12 @@ const ERRORS = {
 } as const;
 
 /** «Моя коллекция»: вход через Google и асыки игрока. */
-export function CollectionScreen({ authError, onBack }: Props) {
+export function CollectionScreen({ authError, onOpenMatch, onCompetitive, onBack }: Props) {
   const { state, reload } = useAccount();
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(authError);
+  const asyks = state.status === 'signedIn' ? state.asyks : null;
+  const locked = useLockedMatches(asyks ? lockedMatches(asyks) : []);
 
   const signIn = async () => {
     setBusy(true);
@@ -93,6 +138,7 @@ export function CollectionScreen({ authError, onBack }: Props) {
                 <>
                   <p className="collection-count">
                     <b>{state.asyks.length}</b> {plural(state.asyks.length, ['асык', 'асыка', 'асыков'])}
+                    {state.asyks.length !== freeCount(state.asyks) && <small className="collection-free"> · свободно {freeCount(state.asyks)}</small>}
                   </p>
                   {state.granted > 0 && (
                     <p className="lobby-status lobby-status--ready">
@@ -101,16 +147,35 @@ export function CollectionScreen({ authError, onBack }: Props) {
                   )}
                   <ul className="collection-grid" aria-label="Асыки в коллекции">
                     {state.asyks.map((a, i) => (
-                      <li key={a.id}>
+                      <li key={a.id} className={a.locked ? 'collection-item collection-item--locked' : 'collection-item'} title={a.locked ? 'Стоит в коне матча' : undefined}>
                         <AsykIcon size={44} rotate={((i * 37) % 11) - 5} />
+                        {a.locked && <span className="collection-item__badge">в коне</span>}
                       </li>
                     ))}
                   </ul>
+                  {locked.map((m) => (
+                    <div key={m.id} className="comp-active">
+                      <p>
+                        <b>{inKon(state.asyks!, m.id)} в коне матча.</b>{' '}
+                        {m.live ? 'Вернутся после его конца.' : 'Матч окончен — асыки скоро вернутся.'}
+                      </p>
+                      {m.code && (
+                        <button className="btn" onClick={() => onOpenMatch(m.code!)}>
+                          Открыть матч
+                        </button>
+                      )}
+                    </div>
+                  ))}
                   <p className="doc__muted">
                     {canStake(state.asyks)
-                      ? `Хватает на ставку: для соревновательной игры нужно ${STAKE_SIZE} асыков. Сам режим скоро появится.`
-                      : `Для соревновательной игры нужно ${STAKE_SIZE} асыков — пока не хватает.`}
+                      ? `Хватает на ставку: для матча на асыки нужно ${STAKE_SIZE} свободных.`
+                      : `Для матча на асыки нужно ${STAKE_SIZE} свободных асыков — пока не хватает.`}
                   </p>
+                  {canStake(state.asyks) && (
+                    <button className="btn btn--primary" onClick={onCompetitive}>
+                      Матч на асыки
+                    </button>
+                  )}
                 </>
               )}
             </section>

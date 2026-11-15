@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getSupabase } from './client';
+import { clearPendingRoute, hashToRoute, savePendingRoute, type Route } from '../ui/routes';
 import { parseCollection, type OwnedAsyk } from './collection';
 
 /**
@@ -22,8 +23,24 @@ function returnUrl(): string {
   return window.location.origin + window.location.pathname;
 }
 
-export async function signInWithGoogle(): Promise<boolean> {
-  const { error } = await getSupabase().auth.signInWithOAuth({ provider: 'google', options: { redirectTo: returnUrl() } });
+/**
+ * Вход через Google. Адрес возврата — без # (см. returnUrl), поэтому экран, на который игрок должен вернуться,
+ * запоминается в sessionStorage вкладки (App забирает его через takePendingRoute из ui/routes.ts):
+ * - `returnTo` задан — вернуться туда;
+ * - не задан, а игрок сейчас на экране соревновательного режима (`#/comp`, `#/comp/<код>`) — вернуться туда же;
+ * - иначе — экран по умолчанию после входа (коллекция).
+ */
+export async function signInWithGoogle(returnTo?: Route): Promise<boolean> {
+  const here = hashToRoute(window.location.hash);
+  const target = returnTo ?? (here.name === 'COMP' || here.name === 'COMP_SETUP' ? here : null);
+  if (target) savePendingRoute(target);
+  else clearPendingRoute();
+  const { error } = await getSupabase().auth.signInWithOAuth({
+    provider: 'google',
+    // select_account: Google всегда спрашивает, каким аккаунтом войти (удобно сменить аккаунт после выхода)
+    options: { redirectTo: returnUrl(), queryParams: { prompt: 'select_account' } },
+  });
+  if (error) clearPendingRoute();
   return !error; // при успехе браузер уходит на страницу входа Google
 }
 
@@ -43,7 +60,10 @@ async function loadCollection(): Promise<{ asyks: OwnedAsyk[]; granted: number }
     if (code === 'PGRST202' || code === '42883' || code === '42P01') return 'setup';
     return 'network';
   }
-  const rows = await sb.from('asyks').select('id, kind').order('id');
+  // locked_match — отметка «в коне матча» (supabase/competitive.sql); пока скрипт режима не выполнен,
+  // такой колонки нет (42703) — тогда коллекция читается без неё, все асыки свободны
+  let rows: { data: unknown; error: { code?: string } | null } = await sb.from('asyks').select('id, kind, locked_match').order('id');
+  if (rows.error?.code === '42703') rows = await sb.from('asyks').select('id, kind').order('id');
   if (rows.error) return rows.error.code === '42P01' || rows.error.code === 'PGRST205' ? 'setup' : 'network';
   const asyks = parseCollection(rows.data);
   if (!asyks) return 'network';

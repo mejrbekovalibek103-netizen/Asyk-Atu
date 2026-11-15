@@ -1,4 +1,4 @@
-import { PHYS, THROW_ORIGIN } from '../config';
+import { playThrow } from '../sim/runThrow';
 import type { LevelConfig } from '../types';
 import type { Aim } from './aim';
 import { throwParams } from './aim';
@@ -13,8 +13,11 @@ export interface SimResult {
 }
 
 /**
- * Headless-симуляция одного броска (без рендера). Используется в тестах,
+ * Headless-симуляция одного броска (без рендера). Используется в тестах и решателе,
  * чтобы проверить, что результат действительно зависит от угла и силы.
+ *
+ * Тонкая обёртка над циклом серверного броска (sim/runThrow.ts → playThrow): бросок без разброса руки,
+ * в переданном мире (или в новом), мир остаётся вызывающему.
  */
 export function simulateThrow(level: LevelConfig, aim: Aim, world?: PhysicsWorld): SimResult {
   const w = world ?? new PhysicsWorld();
@@ -22,27 +25,7 @@ export function simulateThrow(level: LevelConfig, aim: Aim, world?: PhysicsWorld
     w.addObstacles(level.obstacles ?? []);
     w.addAsyks(level.asyks);
   }
-  const p = throwParams(aim, Math.random, false);
-  w.launchSaka(THROW_ORIGIN, p.angle, p.speed, p.spin);
-
-  const knocked: Piece[] = [];
-  let settledFor = 0;
-  let t = 0;
-  let settled = false;
-  while (t < PHYS.maxThrowMs) {
-    w.step();
-    t += PHYS.stepMs;
-    knocked.push(...w.checkKnockouts(level.zone, 1));
-    if (w.isSettled()) {
-      settledFor += PHYS.stepMs;
-      if (settledFor >= PHYS.settleMs) {
-        settled = true;
-        break;
-      }
-    } else {
-      settledFor = 0;
-    }
-  }
+  const r = playThrow(w, level.zone, throwParams(aim, Math.random, false), 1);
   const pos = w.saka?.body.position ?? { x: NaN, y: NaN };
-  return { knocked, sakaEnd: { x: pos.x, y: pos.y }, durationMs: t, settled, world: w };
+  return { knocked: r.knocked, sakaEnd: { x: pos.x, y: pos.y }, durationMs: r.durationMs, settled: r.settled, world: w };
 }
