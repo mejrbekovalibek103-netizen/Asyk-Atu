@@ -13,6 +13,7 @@ import { PowerMeter, RotateHint, Toast } from '../game/GameOverlays';
 import { TurnBanner } from '../game/MatchParts';
 import { useGameEngine } from '../game/useGameEngine';
 import { CompResultOverlay } from './CompResultOverlay';
+import { markRematchIntent } from '../game/rematchIntent';
 
 interface Props {
   /** Последнее состояние матча из базы (useCompMatch). */
@@ -24,6 +25,8 @@ interface Props {
   onToggleMute: () => void;
   onCollection: () => void;
   onMenu: () => void;
+  /** Перейти в лобби другого матча (реванш) по коду. */
+  onOpenMatch: (code: string) => void;
 }
 
 /** Текст отказа сервера для игрока; «режим не настроен» — понятнее для игрока. */
@@ -357,7 +360,19 @@ function CompGame(props: Props & { bootRaw: unknown; bootView: CompView }) {
         </Modal>
       )}
 
-      {done && <CompResultOverlay state={state} onCollection={props.onCollection} onMenu={props.onMenu} />}
+      {done && (
+        <CompResultOverlay
+          state={state}
+          errorText={compText}
+          onRematch={async (kind) => {
+            const r = await match.actions.rematch();
+            if (kind === 'rematch') markRematchIntent(r.joinCode);
+            props.onOpenMatch(r.joinCode);
+          }}
+          onCollection={props.onCollection}
+          onMenu={props.onMenu}
+        />
+      )}
     </div>
   );
 }

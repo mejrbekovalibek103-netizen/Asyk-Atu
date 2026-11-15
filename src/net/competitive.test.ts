@@ -18,6 +18,7 @@ import {
   parseDbTime,
   parseJoinResult,
   parseOpenResult,
+  parseRematchResult,
   parseSrv,
   parseThrowResponse,
   serverNow,
@@ -208,6 +209,19 @@ describe('состояние матча (comp_state)', () => {
     expect(st?.result).toEqual({ refunded: false, won: [1, 3], returned: [0, 2], lost: [4], delta: 1 });
   });
 
+  it('код реванша: нет поля — null, верный код — нормализуется, мусор — отказ', () => {
+    expect(parseCompState(stateJson())?.match.nextCode).toBeNull();
+    expect(parseCompState(stateJson({ match: { next_code: null } }))?.match.nextCode).toBeNull();
+    expect(parseCompState(stateJson({ match: { next_code: 'abcde-fghjk' } }))?.match.nextCode).toBe('ABCDEFGHJK');
+    expect(parseCompState(stateJson({ match: { next_code: '<script>' } }))).toBeNull();
+    expect(parseCompState(stateJson({ match: { next_code: 5 } }))).toBeNull();
+  });
+
+  it('новые коны принимаются, неизвестные — нет', () => {
+    expect(parseCompState(stateJson({ match: { layout_id: 'stake-piles' } }))?.match.layoutId).toBe('stake-piles');
+    expect(parseCompState(stateJson({ match: { layout_id: 'ulken-kon' } }))).toBeNull();
+  });
+
   it('имена чистятся: управляющие символы убираются, пустое — запасное', () => {
     const st = parseCompState(stateJson({ players: [player({ lobby_slot: 0, seat: 0, name: 'А‮йдос', is_me: true }), player({ lobby_slot: 1, seat: 1, name: '' })] }));
     expect(st?.players.map((p) => p.name)).toEqual(['Айдос', 'Гость']);
@@ -221,6 +235,12 @@ describe('ответы comp_open, comp_join, my_comp_history', () => {
     expect(parseOpenResult({ match_id: 'x', join_code: 'ABCDEFGHJK', lobby_slot: 0 })).toBeNull();
     expect(parseOpenResult({ match_id: MATCH, join_code: 'ABCDEFGHJK', lobby_slot: 7 })).toBeNull();
     expect(parseJoinResult({ match_id: MATCH, join_code: 'ABCDEFGHJK', lobby_slot: 1, status: 'x' })).toBeNull();
+  });
+
+  it('реванш: created обязателен', () => {
+    expect(parseRematchResult({ match_id: MATCH, join_code: 'ABCDEFGHJK', lobby_slot: 1, created: false })).toEqual({ matchId: MATCH, joinCode: 'ABCDEFGHJK', lobbySlot: 1, created: false });
+    expect(parseRematchResult({ match_id: MATCH, join_code: 'ABCDEFGHJK', lobby_slot: 0 })).toBeNull();
+    expect(parseRematchResult({ match_id: MATCH, join_code: 'ABCDEFGHJK', lobby_slot: 0, created: 'yes' })).toBeNull();
   });
 
   it('история: испорченные записи пропускаются', () => {

@@ -1300,7 +1300,14 @@ function growingFor(g, players) {
 var STAKE_LAYOUT_IDS = [
 	"stake-line",
 	"stake-scatter",
-	"stake-ring"
+	"stake-ring",
+	"stake-uime",
+	"stake-korgan",
+	"stake-series",
+	"stake-romb",
+	"stake-irek",
+	"stake-qaqpa",
+	"stake-piles"
 ];
 /** Шаг асыков в линии — как в «Большом коне». */
 var STAKE_LINE_PITCH = 59;
@@ -1366,8 +1373,268 @@ var STAKE_DEFS = [
 				asyks: numbered(ring(5 * n, cx, cy, r))
 			};
 		}
+	},
+	{
+		id: "stake-uime",
+		name: "Горка",
+		kazName: "Үйме",
+		description: "Асыки треугольником. Кто разобьёт строй?",
+		build: (n) => {
+			const rows = {
+				2: [
+					1,
+					2,
+					3,
+					4
+				],
+				3: [
+					1,
+					2,
+					3,
+					4,
+					5
+				],
+				4: [
+					2,
+					3,
+					4,
+					5,
+					6
+				]
+			}[n];
+			const asyks = numbered(rowsCentered(rows, 60, 50, 410));
+			return {
+				zone: rectAround(asyks, PAD),
+				asyks
+			};
+		}
+	},
+	{
+		id: "stake-korgan",
+		name: "Крепость",
+		kazName: "Қорған",
+		description: "Асыки в два кольца. Дуэль за центр.",
+		build: (n) => {
+			const spec = {
+				2: {
+					outer: 7,
+					ro: 150,
+					inner: 3,
+					ri: 70
+				},
+				3: {
+					outer: 10,
+					ro: 170,
+					inner: 5,
+					ri: 85
+				},
+				4: {
+					outer: 12,
+					ro: 190,
+					inner: 8,
+					ri: 105
+				}
+			}[n];
+			const cx = 400;
+			const cy = 430;
+			const pts = [...ring(spec.outer, cx, cy, spec.ro), ...ring(spec.inner, cx, cy, spec.ri, Math.PI / 2)];
+			return {
+				zone: {
+					kind: "circle",
+					cx,
+					cy,
+					r: spec.ro + 62
+				},
+				asyks: numbered(pts)
+			};
+		}
+	},
+	{
+		id: "stake-series",
+		name: "Три ряда",
+		kazName: "Тізбек",
+		description: "Асыки в три ряда — долгий матч.",
+		build: (n) => {
+			const asyks = numbered({
+				2: [
+					4,
+					3,
+					3
+				],
+				3: [
+					5,
+					5,
+					5
+				],
+				4: [
+					7,
+					6,
+					7
+				]
+			}[n].flatMap((k, r) => Array.from({ length: k }, (_, i) => ({
+				x: 400 + (i - (k - 1) / 2) * 66 + (r % 2 ? 22 : 0),
+				y: 340 + r * 80
+			}))));
+			return {
+				zone: rectAround(asyks, PAD),
+				asyks
+			};
+		}
+	},
+	{
+		id: "stake-romb",
+		name: "Ромб",
+		kazName: "Ромб",
+		description: "Асыки ромбом: удар в нижнюю вершину разносит его цепочкой.",
+		build: (n) => {
+			const rows = {
+				2: [
+					1,
+					2,
+					4,
+					2,
+					1
+				],
+				3: [
+					1,
+					2,
+					3,
+					3,
+					3,
+					2,
+					1
+				],
+				4: [
+					1,
+					2,
+					3,
+					4,
+					4,
+					3,
+					2,
+					1
+				]
+			}[n];
+			const asyks = numbered(rowsCentered(rows, 60, 46, 410));
+			return {
+				zone: rectAround(asyks, PAD),
+				asyks
+			};
+		}
+	},
+	{
+		id: "stake-irek",
+		name: "Змейки",
+		kazName: "Ирек",
+		description: "Извилистые линии асыков поперёк двора — бей вдоль змейки.",
+		build: (n) => {
+			const asyks = numbered({
+				2: [5, 5],
+				3: [8, 7],
+				4: [10, 10]
+			}[n].flatMap((k, r) => {
+				const pitch = Math.min(70, 560 / (k - 1));
+				const y = 350 + r * 120;
+				return Array.from({ length: k }, (_, i) => ({
+					x: 400 + (i - (k - 1) / 2) * pitch,
+					y: y + (i % 2 ? 22 : -22)
+				}));
+			}));
+			return {
+				zone: rectAround(asyks, PAD),
+				asyks
+			};
+		}
+	},
+	{
+		id: "stake-qaqpa",
+		name: "Ворота",
+		kazName: "Қақпа",
+		description: "Блок асыков, а за ним два камня-«ворот»: от камня асык отскочит назад.",
+		build: (n) => {
+			const cols = 5;
+			const pitchX = 60;
+			const pitchY = 48;
+			const top = 320;
+			const asyks = numbered(Array.from({ length: cols * n }, (_, i) => ({
+				x: 400 + (i % cols - 2) * pitchX,
+				y: top + Math.floor(i / cols) * pitchY
+			})));
+			return {
+				zone: rectAround(asyks, PAD),
+				asyks,
+				obstacles: [{
+					x: 280,
+					y: 262,
+					w: 60,
+					h: 40
+				}, {
+					x: 520,
+					y: 262,
+					w: 60,
+					h: 40
+				}]
+			};
+		}
+	},
+	{
+		id: "stake-piles",
+		name: "Кучки",
+		kazName: "Үйінділер",
+		description: "По кучке из пяти асыков на каждого игрока; за кучками — камни.",
+		build: (n) => {
+			const pile = [
+				[-58, -24],
+				[0, -24],
+				[58, -24],
+				[-29, 24],
+				[29, 24]
+			];
+			const asyks = numbered({
+				2: [[-130, 0], [130, 0]],
+				3: [
+					[-200, 0],
+					[0, 0],
+					[200, 0]
+				],
+				4: [
+					[-125, -90],
+					[125, -90],
+					[-125, 90],
+					[125, 90]
+				]
+			}[n].flatMap(([cx, cy]) => pile.map(([dx, dy]) => ({
+				x: 400 + cx + dx,
+				y: 410 + cy + dy
+			}))));
+			const top = Math.min(...asyks.map((a) => a.y));
+			const sx = n === 3 ? 200 : 130;
+			return {
+				zone: rectAround(asyks, PAD),
+				asyks,
+				obstacles: [{
+					x: 400 - sx,
+					y: top - STONE_BACK,
+					w: 60,
+					h: 40
+				}, {
+					x: 400 + sx,
+					y: top - STONE_BACK,
+					w: 60,
+					h: 40
+				}]
+			};
+		}
 	}
 ];
+/** Ряды по k асыков, каждый по центру двора; весь блок — по центру вокруг cy. */
+function rowsCentered(rows, pitch, dy, cy) {
+	const top = cy - (rows.length - 1) * dy / 2;
+	return rows.flatMap((k, r) => Array.from({ length: k }, (_, i) => ({
+		x: 400 + (i - (k - 1) / 2) * pitch,
+		y: top + r * dy
+	})));
+}
 var stakeCache = /* @__PURE__ */ new Map();
 /** Это кон соревновательного режима. */
 function isStakeLayout(id) {

@@ -145,8 +145,10 @@ describe('растущие коны: проходимость за лимит м
 // ——— коны соревновательного режима ———
 
 describe('коны «на асыки»: ровно 5 асыков от каждого игрока', () => {
-  it('три кона, отдельно от обычных', () => {
-    expect(STAKE_LAYOUT_IDS).toEqual(['stake-line', 'stake-scatter', 'stake-ring']);
+  it('десять конов, отдельно от обычных; первые три — прежние (их id хранятся в базе)', () => {
+    expect(STAKE_LAYOUT_IDS).toHaveLength(10);
+    expect(STAKE_LAYOUT_IDS.slice(0, 3)).toEqual(['stake-line', 'stake-scatter', 'stake-ring']);
+    expect(new Set(STAKE_LAYOUT_IDS).size).toBe(STAKE_LAYOUT_IDS.length);
     expect(STAKE_LAYOUTS.map((l) => l.id)).toEqual([...STAKE_LAYOUT_IDS]);
     for (const id of STAKE_LAYOUT_IDS) {
       expect(isStakeLayout(id)).toBe(true);
@@ -165,7 +167,9 @@ describe('коны «на асыки»: ровно 5 асыков от кажд�
       const l = getStakeLayout(id, n);
       it(`${l.name} на ${n}: ${COMP_STAKE * n} асыков внутри кона и двора, не пересекаются, досягаемы`, () => {
         expect(l.asyks).toHaveLength(COMP_STAKE * n);
-        expect(l.obstacles ?? []).toHaveLength(0);
+        // камни, если есть, — только позади асыков (у дальнего края кона), иначе в коне будет «тень»
+        const topAsyk = Math.min(...l.asyks.map((a) => a.y));
+        for (const o of l.obstacles ?? []) expect(o.y).toBeLessThan(topAsyk - ASYK_H);
         for (const a of l.asyks) {
           expect(zoneContains(l.zone, a)).toBe(true);
           expect(a.x - ASYK_W / 2).toBeGreaterThan(CURB);

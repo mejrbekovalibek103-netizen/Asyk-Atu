@@ -24,6 +24,7 @@ import { Icon } from '../components/Icon';
 import { LevelPreview } from '../components/LevelPreview';
 import { Modal } from '../components/Modal';
 import { cleanName, NAME_MAX, plural } from '../format';
+import { takeRematchIntent } from '../game/rematchIntent';
 import { StakeModal } from '../game/StakeModal';
 import { compEndText } from './CompResultOverlay';
 import { CompetitiveMatchScreen, compText } from './CompetitiveMatchScreen';
@@ -408,6 +409,8 @@ interface LobbyProps {
 
 export function CompetitiveLobbyScreen(props: LobbyProps) {
   const { code, defaultName, authError, onMenu } = props;
+  // пришли сюда кнопкой «Реванш» — ставка и жребий сами (см. rematchIntent.ts)
+  const [autoRematch] = useState(() => takeRematchIntent(code));
   const { state: account, reload } = useAccount();
   const [matchId, setMatchId] = useState<string | null>(null);
   const [joinError, setJoinError] = useState<unknown>(null);
@@ -445,7 +448,16 @@ export function CompetitiveLobbyScreen(props: LobbyProps) {
       </Page>
     );
 
-  if (matchId) return <CompMatchRoom {...props} matchId={matchId} freeAsyks={account.status === 'signedIn' && account.asyks ? freeCount(account.asyks) : null} onReloadAccount={reload} />;
+  if (matchId)
+    return (
+      <CompMatchRoom
+        {...props}
+        matchId={matchId}
+        autoRematch={autoRematch}
+        freeAsyks={account.status === 'signedIn' && account.asyks ? freeCount(account.asyks) : null}
+        onReloadAccount={reload}
+      />
+    );
 
   if (askName && !joining && joinError === null)
     return (
@@ -587,7 +599,7 @@ function CompSlots({ state, stage, onKick, kicking }: { state: CompState; stage:
   );
 }
 
-function CompMatchRoom(props: LobbyProps & { matchId: string; freeAsyks: number | null; onReloadAccount: () => void }) {
+function CompMatchRoom(props: LobbyProps & { matchId: string; autoRematch: boolean; freeAsyks: number | null; onReloadAccount: () => void }) {
   const match = useCompMatch(props.matchId);
   const { state, error } = match;
   const st = state?.match.status;
@@ -641,6 +653,7 @@ function CompMatchRoom(props: LobbyProps & { matchId: string; freeAsyks: number 
         onToggleMute={props.onToggleMute}
         onCollection={props.onCollection}
         onMenu={props.onMenu}
+        onOpenMatch={props.onOpenMatch}
       />
     );
 
@@ -668,7 +681,7 @@ function CompMatchRoom(props: LobbyProps & { matchId: string; freeAsyks: number 
   );
 }
 
-type RoomProps = LobbyProps & { matchId: string; freeAsyks: number | null; onReloadAccount: () => void; state: CompState; match: CompMatchView };
+type RoomProps = LobbyProps & { matchId: string; autoRematch: boolean; freeAsyks: number | null; onReloadAccount: () => void; state: CompState; match: CompMatchView };
 
 /** Выйти из лобби: хозяину — с подтверждением (матч отменится). */
 function useLeave(props: RoomProps) {
@@ -712,14 +725,17 @@ function LeaveModal({ text, busy, onLeave, onClose }: { text: string; busy: bool
 function FormingView(props: RoomProps) {
   const { state, match } = props;
   const [stakeOpen, setStakeOpen] = useState(false);
-  const [busy, setBusy] = useState<'stake' | 'unstake' | 'start' | null>(null);
+  const [busy, setBusy] = useState<'stake' | 'unstake' | 'start' | 'layout' | null>(null);
+  const [layoutOpen, setLayoutOpen] = useState(false);
+  const autoStaked = useRef(false);
+  const autoStarted = useRef(false);
   const [kicking, setKicking] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [stakeError, setStakeError] = useState<string | null>(null);
   const leave = useLeave(props);
   const me = state.me;
   const others = state.players.filter((p) => !p.isMe);
-  const layout = getStakeLayout(state.match.layoutId, 2);
+  const layout = getStakeLayout(state.match.layoutId, Math.max(2, state.players.length));
   const allStaked = state.players.length >= 2 && state.players.every((p) => p.staked);
 
   const run = async (kind: 'unstake' | 'start', fn: () => Promise<unknown>) => {
@@ -750,6 +766,46 @@ function FormingView(props: RoomProps) {
     }
   };
 
+  const changeLayout = async (id: StakeLayoutId) => {
+    if (id === state.match.layoutId) return setLayoutOpen(false);
+    sound.uiClick();
+    setBusy('layout');
+    setError(null);
+    try {
+      await match.actions.setLayout(id);
+      setLayoutOpen(false);
+    } catch (e) {
+      setError(compText(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // «Реванш»: своя ставка — сразу, без окна правил (их уже видели); не вышло — открываем окно с причиной
+  useEffect(() => {
+    if (!props.autoRematch || me.staked || autoStaked.current || busy !== null) return;
+    autoStaked.current = true;
+    void (async () => {
+      setBusy('stake');
+      try {
+        await match.actions.stake();
+        props.onReloadAccount();
+      } catch (e) {
+        setStakeError(compText(e));
+        setStakeOpen(true);
+      } finally {
+        setBusy(null);
+      }
+    })();
+  }, [props.autoRematch, me.staked, busy]);
+
+  // «Реванш» у хозяина: оба поставили — жребий сам
+  useEffect(() => {
+    if (!props.autoRematch || !me.isHost || !allStaked || autoStarted.current || busy !== null) return;
+    autoStarted.current = true;
+    void run('start', () => match.actions.start());
+  }, [props.autoRematch, me.isHost, allStaked, busy]);
+
   const kick = async (slot: number) => {
     setKicking(slot);
     setError(null);
@@ -768,6 +824,8 @@ function FormingView(props: RoomProps) {
     else if (!me.staked) status = <p className="lobby-status">Поставь {STAKE_SIZE} асыков, чтобы начать.</p>;
     else if (!allStaked) status = <p className="lobby-status">Ждём ставку: {others.filter((p) => !p.staked).map((p) => p.name).join(', ')}<span className="dots" aria-hidden="true" /></p>;
     else status = <p className="lobby-status lobby-status--ready">Ставки сделаны — можно бросать жребий!</p>;
+  } else if (props.autoRematch && me.staked) {
+    status = <p className="lobby-status">Реванш! Ждём соперника<span className="dots" aria-hidden="true" /></p>;
   } else {
     status = me.staked ? (
       <p className="lobby-status">Ждём, пока хозяин бросит жребий<span className="dots" aria-hidden="true" /></p>
@@ -824,6 +882,20 @@ function FormingView(props: RoomProps) {
           <b>
             {layout.name} <small>{layout.kazName}</small>
           </b>
+          {me.isHost ? (
+            <button
+              className="btn comp-layout-change"
+              onClick={() => {
+                sound.uiClick();
+                setLayoutOpen(true);
+              }}
+              disabled={busy !== null}
+            >
+              <Icon name="grid" /> Сменить кон
+            </button>
+          ) : (
+            <p className="doc__muted">Кон выбирает хозяин.</p>
+          )}
           <p className="doc__muted">
             {asyks(layout.asyks.length)}: по {STAKE_SIZE} от каждого. По {state.match.throwsPerPlayer} бросков, на ход — {state.match.turnSeconds} с. Кто бросает первым и где
             чей асык, решит жребий сервера.
@@ -831,6 +903,18 @@ function FormingView(props: RoomProps) {
         </div>
       </section>
 
+      {layoutOpen && (
+        <Modal labelledBy="comp-layout-title" onClose={busy === 'layout' ? undefined : () => setLayoutOpen(false)} className="modal--layouts">
+          <h2 id="comp-layout-title" className="modal__title">
+            Выбери кон
+          </h2>
+          <p className="modal__text">Ставки остаются: в любом коне по {STAKE_SIZE} асыков от каждого.</p>
+          <StakeLayoutPicker value={state.match.layoutId} onChange={(id) => void changeLayout(id)} />
+          <button className="btn btn--ghost btn--block" onClick={() => setLayoutOpen(false)} disabled={busy === 'layout'}>
+            Закрыть
+          </button>
+        </Modal>
+      )}
       {stakeOpen && <StakeModal free={props.freeAsyks} busy={busy === 'stake'} error={stakeError} onConfirm={() => void stake()} onClose={() => setStakeOpen(false)} />}
       {leave.confirm && (
         <LeaveModal

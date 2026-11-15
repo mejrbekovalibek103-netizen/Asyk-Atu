@@ -2382,3 +2382,31 @@ button {
   line-height: 15px;
   white-space: nowrap;
 }
+
+/* реванш и смена кона в матче на асыки */
+.result-actions--minor {
+  margin-top: 8px;
+}
+.comp-rematch-call {
+  margin-top: 12px;
+}
+.comp-layout-change {
+  margin-top: 8px;
+  min-height: 36px;
+  padding: 6px 14px;
+  font-size: 14px;
+}
+.modal--layouts {
+  max-width: 760px;
+  text-align: left;
+}
+.modal--layouts .modal__title,
+.modal--layouts .modal__text {
+  text-align: center;
+}
+.modal--layouts .layout-picker {
+  margin-bottom: 12px;
+}
+.result-actions__wide {
+  grid-column: 1 / -1;
+}

@@ -1232,6 +1232,133 @@ begin
     v_names := array_append(v_names, '19. Сдача в свой ход'::text);
     v_oks := array_append(v_oks, v_ok); v_infos := array_append(v_infos, v_info);
 
+    -- ——— 20. Реванш: одно новое лобби на двоих, чужим нельзя, до конца матча нельзя ———
+    v_ok := true; v_info := '';
+    begin
+      perform set_config('request.jwt.claims', v_ja, true);
+      set local role authenticated;
+      v_msg := null;
+      begin perform public.comp_rematch(v_m, '0123456789abcdef'); exception when others then v_msg := sqlerrm; end;
+      reset role;
+      if v_msg is distinct from 'not_over' then
+        v_ok := false; v_info := v_info || ' [реванш до конца матча: ' || coalesce(v_msg, 'прошёл') || ']';
+      end if;
+
+      perform private.comp_settle(v_m, 'cleared');
+      if (select m.status from public.comp_matches m where m.id = v_m) <> 'settled' then
+        raise exception 'подготовка: матч не раздан';
+      end if;
+
+      perform set_config('request.jwt.claims', v_jc, true);
+      set local role authenticated;
+      v_msg := null;
+      begin perform public.comp_rematch(v_m, '1111111111111111'); exception when others then v_msg := sqlerrm; end;
+      reset role;
+      if v_msg is distinct from 'not_member' then
+        v_ok := false; v_info := v_info || ' [реванш чужого матча: ' || coalesce(v_msg, 'прошёл') || ']';
+      end if;
+
+      perform set_config('request.jwt.claims', v_jb, true);
+      set local role authenticated;
+      v_r := public.comp_rematch(v_m, 'fedcba9876543210');
+      perform set_config('request.jwt.claims', v_ja, true);
+      v_r2 := public.comp_rematch(v_m, '0123456789abcdef');
+      reset role;
+      v_m2 := (v_r ->> 'match_id')::uuid;
+      if not (v_r ->> 'created')::boolean or (v_r2 ->> 'created')::boolean
+         or (v_r2 ->> 'match_id')::uuid <> v_m2
+         or (v_r ->> 'lobby_slot')::int <> 0 or (v_r2 ->> 'lobby_slot')::int <> 1 then
+        v_ok := false; v_info := v_info || ' [реванш: не одно лобби на двоих: ' || v_r::text || ' / ' || v_r2::text || ']';
+      end if;
+      if (select m.layout_id from public.comp_matches m where m.id = v_m2)
+         <> (select m.layout_id from public.comp_matches m where m.id = v_m)
+         or (select m.status from public.comp_matches m where m.id = v_m2) <> 'forming'
+         or (select m.host from public.comp_matches m where m.id = v_m2) <> v_b then
+        v_ok := false; v_info := v_info || ' [новое лобби: не тот кон, статус или хозяин]';
+      end if;
+      -- повторное нажатие — то же лобби, без нового матча
+      perform set_config('request.jwt.claims', v_jb, true);
+      set local role authenticated;
+      v_r2 := public.comp_rematch(v_m, 'fedcba9876543210');
+      v_x := public.comp_state(v_m);
+      reset role;
+      if (v_r2 ->> 'match_id')::uuid <> v_m2 or (v_r2 ->> 'created')::boolean then
+        v_ok := false; v_info := v_info || ' [повторный реванш создал новый матч]';
+      end if;
+      if (v_x -> 'match' ->> 'next_code') is distinct from (v_r ->> 'join_code') then
+        v_ok := false; v_info := v_info || ' [comp_state старого матча без next_code]';
+      end if;
+      -- ставка в новом лобби — заново: асыки после раздачи свободны
+      perform set_config('request.jwt.claims', v_ja, true);
+      set local role authenticated;
+      v_ids := public.comp_stake(v_m2);
+      reset role;
+      if cardinality(v_ids) <> 5 then
+        v_ok := false; v_info := v_info || ' [ставка в реванше не прошла]';
+      end if;
+      raise exception 'comp_check_rollback';
+    exception when others then
+      if sqlerrm <> 'comp_check_rollback' then
+        v_ok := false; v_info := v_info || ' ошибка: ' || sqlstate || ' ' || sqlerrm;
+      end if;
+    end;
+    v_names := array_append(v_names, '20. Реванш: одно лобби на двоих'::text);
+    v_oks := array_append(v_oks, v_ok); v_infos := array_append(v_infos, v_info);
+
+    -- ——— 21. Смена кона в лобби: только хозяин, только до жребия, только известные коны ———
+    v_ok := true; v_info := '';
+    begin
+      perform set_config('request.jwt.claims', v_jc, true);
+      set local role authenticated;
+      v_r := public.comp_open('stake-piles', '1111111111111111', 'Сәкен');
+      v_m2 := (v_r ->> 'match_id')::uuid;
+      v_code2 := v_r ->> 'join_code';
+      perform set_config('request.jwt.claims', v_je, true);
+      perform public.comp_join(v_code2, '2222222222222222', 'Ерлан');
+      v_msg := null;
+      begin perform public.comp_set_layout(v_m2, 'stake-romb'); exception when others then v_msg := sqlerrm; end;
+      if v_msg is distinct from 'not_host' then
+        v_ok := false; v_info := v_info || ' [гость сменил кон: ' || coalesce(v_msg, 'прошло') || ']';
+      end if;
+      perform set_config('request.jwt.claims', v_jc, true);
+      perform public.comp_stake(v_m2);
+      v_x := public.comp_set_layout(v_m2, 'stake-romb');
+      if (v_x -> 'match' ->> 'layout_id') <> 'stake-romb' then
+        v_ok := false; v_info := v_info || ' [хозяин не сменил кон]';
+      end if;
+      v_msg := null;
+      begin perform public.comp_set_layout(v_m2, 'ulken-kon'); exception when others then v_msg := sqlerrm; end;
+      if v_msg is distinct from 'bad_layout' then
+        v_ok := false; v_info := v_info || ' [неизвестный кон: ' || coalesce(v_msg, 'прошло') || ']';
+      end if;
+      reset role;
+      -- после старта кон менять нельзя (основной матч уже идёт; его хозяин — A)
+      perform set_config('request.jwt.claims', v_ja, true);
+      set local role authenticated;
+      v_msg := null;
+      begin perform public.comp_set_layout(v_m, 'stake-ring'); exception when others then v_msg := sqlerrm; end;
+      reset role;
+      if v_msg is distinct from 'not_forming' then
+        v_ok := false; v_info := v_info || ' [смена кона после старта: ' || coalesce(v_msg, 'прошла') || ']';
+      end if;
+      -- неизвестный кон не записать даже владельцу базы: ограничение таблицы
+      v_msg := null;
+      begin
+        update public.comp_matches m set layout_id = 'bogus' where m.id = v_m2;
+      exception when others then v_msg := sqlstate;
+      end;
+      if v_msg is distinct from '23514' then
+        v_ok := false; v_info := v_info || ' [ограничение конов не сработало: ' || coalesce(v_msg, 'записалось') || ']';
+      end if;
+      raise exception 'comp_check_rollback';
+    exception when others then
+      if sqlerrm <> 'comp_check_rollback' then
+        v_ok := false; v_info := v_info || ' ошибка: ' || sqlstate || ' ' || sqlerrm;
+      end if;
+    end;
+    v_names := array_append(v_names, '21. Смена кона в лобби'::text);
+    v_oks := array_append(v_oks, v_ok); v_infos := array_append(v_infos, v_info);
+
     raise exception 'comp_check_rollback'; -- откат всех тестовых данных
   exception when others then
     if sqlerrm <> 'comp_check_rollback' then
@@ -1266,7 +1393,7 @@ begin
   if v_fail is not null then
     raise exception 'competitive.check: FAIL — %', v_fail;
   end if;
-  if v_total < 19 then
+  if v_total < 21 then
     raise exception 'competitive.check: FAIL — выполнено сценариев: %', v_total;
   end if;
   raise notice 'ALL PASS';

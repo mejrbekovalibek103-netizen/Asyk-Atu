@@ -67,6 +67,12 @@ create or replace function private.comp_min_power() returns double precision
   language sql immutable security definer set search_path = ''
 as $$ select 0.079::double precision $$;
 
+-- Коны соревновательного режима: должны совпадать с STAKE_LAYOUT_IDS (src/game/levels/matchLayouts.ts).
+-- Новый кон — добавьте id сюда и выполните скрипт заново (ограничение таблицы пересоздаётся ниже).
+create or replace function private.comp_layout_ids() returns text[]
+  language sql immutable security definer set search_path = ''
+as $$ select array['stake-line', 'stake-scatter', 'stake-ring', 'stake-uime', 'stake-korgan', 'stake-series', 'stake-romb', 'stake-irek', 'stake-qaqpa', 'stake-piles']::text[] $$;
+
 -- ——— таблицы ———
 
 alter table public.profiles
@@ -77,7 +83,7 @@ create table if not exists public.comp_matches (
   id uuid primary key default gen_random_uuid(),
   join_code text not null unique check (join_code ~ '^[A-HJKMNP-Z2-9]{10}$'),
   host uuid not null,                         -- без FK: удаление аккаунта не блокируется
-  layout_id text not null check (layout_id in ('stake-line', 'stake-scatter', 'stake-ring')),
+  layout_id text not null,                    -- проверка — ограничение comp_matches_layout_id_check ниже
   sim_version int not null,
   status text not null default 'forming'
     check (status in ('forming', 'ready', 'active', 'settled', 'cancelled', 'void')),
@@ -97,6 +103,13 @@ create table if not exists public.comp_matches (
   end_reason text
 );
 alter table public.comp_matches add column if not exists turn_started_at timestamptz;
+-- список конов растёт: ограничение пересоздаётся при каждом запуске скрипта
+alter table public.comp_matches drop constraint if exists comp_matches_layout_id_check;
+alter table public.comp_matches add constraint comp_matches_layout_id_check
+  check (layout_id = any (private.comp_layout_ids()));
+-- Реванш: следующий матч той же компании (comp_rematch). Игрокам колонка не выдаётся — код реванша в comp_state.
+alter table public.comp_matches add column if not exists next_match uuid
+  references public.comp_matches (id) on delete set null;
 -- Счётчик изменений состава (вход, ставка, «Я здесь», выход, сдача…). comp_players не публикуется
 -- в Realtime (там DELETE уходят всем без RLS), поэтому сигнал «перечитай comp_state» идёт через строку матча.
 alter table public.comp_matches add column if not exists players_rev int not null default 0;
@@ -832,7 +845,10 @@ begin
       'created_at', v_m.created_at,
       'started_at', v_m.started_at,
       'settled_at', v_m.settled_at,
-      'end_reason', v_m.end_reason),
+      'end_reason', v_m.end_reason,
+      -- реванш: код следующего матча, пока в него можно войти или он идёт
+      'next_code', (select n.join_code from public.comp_matches n
+                    where n.id = v_m.next_match and n.status in ('forming', 'ready', 'active'))),
     'me', jsonb_build_object(
       'lobby_slot', v_me.lobby_slot,
       'seat', v_me.seat,
@@ -872,7 +888,7 @@ declare
   v_code text;
   v_try int := 0;
 begin
-  if p_layout is null or p_layout not in ('stake-line', 'stake-scatter', 'stake-ring') then
+  if p_layout is null or not (p_layout = any (private.comp_layout_ids())) then
     raise exception 'bad_layout' using errcode = 'P0001';
   end if;
   if p_client_id is null or p_client_id !~ '^[0-9a-f]{16}$' then
@@ -1429,6 +1445,74 @@ begin
 end;
 $$;
 
+-- Хозяин меняет кон в лобби (до жребия). Ставки не трогаются: кон из тех же 5 · N асыков.
+create or replace function public.comp_set_layout(p_match uuid, p_layout text) returns jsonb
+  language plpgsql volatile security definer set search_path = ''
+as $$
+declare
+  v_uid uuid := private.comp_caller();
+  v_m public.comp_matches%rowtype;
+begin
+  if p_layout is null or not (p_layout = any (private.comp_layout_ids())) then
+    raise exception 'bad_layout' using errcode = 'P0001';
+  end if;
+  perform private.comp_require_member(p_match, v_uid);
+  select m.* into v_m from public.comp_matches m where m.id = p_match for update;
+  if v_m.host <> v_uid then
+    raise exception 'not_host' using errcode = 'P0001';
+  end if;
+  if v_m.status <> 'forming' then
+    raise exception 'not_forming' using errcode = 'P0001';
+  end if;
+  if v_m.layout_id <> p_layout then
+    update public.comp_matches m set layout_id = p_layout, players_rev = m.players_rev + 1 where m.id = p_match;
+  end if;
+  return private.comp_state_json(p_match, v_uid);
+end;
+$$;
+
+-- Реванш / «В комнату» после матча: следующий матч той же компании.
+-- Первый нажавший создаёт новое лобби (тот же кон, он — хозяин), остальные входят в него.
+-- Ставка в новом матче — заново, обычным comp_stake. Возвращает {match_id, join_code, lobby_slot, created}.
+create or replace function public.comp_rematch(p_match uuid, p_client_id text) returns jsonb
+  language plpgsql volatile security definer set search_path = ''
+as $$
+declare
+  v_uid uuid := private.comp_caller();
+  v_m public.comp_matches%rowtype;
+  v_name text;
+  v_code text;
+  v_status text;
+  v_res jsonb;
+begin
+  if p_client_id is null or p_client_id !~ '^[0-9a-f]{16}$' then
+    raise exception 'bad_client_id' using errcode = 'P0001';
+  end if;
+  perform private.comp_require_member(p_match, v_uid);
+  -- блокировка старого матча: двое нажали одновременно — второй ждёт и входит в лобби первого
+  select m.* into v_m from public.comp_matches m where m.id = p_match for update;
+  if v_m.status not in ('settled', 'cancelled', 'void') then
+    raise exception 'not_over' using errcode = 'P0001';
+  end if;
+  select p.display_name into v_name from public.comp_players p where p.match_id = p_match and p.user_id = v_uid;
+
+  if v_m.next_match is not null then
+    select n.join_code, n.status into v_code, v_status from public.comp_matches n where n.id = v_m.next_match;
+    if found and v_status in ('forming', 'ready', 'active') then
+      -- участнику comp_join вернёт его место в любом статусе, новичку — свободное место в лобби
+      return public.comp_join(v_code, p_client_id, v_name) || jsonb_build_object('created', false);
+    end if;
+  end if;
+
+  -- следующего матча нет (или он уже кончился) — новое лобби
+  v_res := public.comp_open(v_m.layout_id, p_client_id, v_name);
+  update public.comp_matches m
+     set next_match = (v_res ->> 'match_id')::uuid, players_rev = m.players_rev + 1
+   where m.id = p_match;
+  return v_res || jsonb_build_object('created', true);
+end;
+$$;
+
 -- ——— служебные функции (только service_role: их вызывает серверная функция comp-throw) ———
 
 -- Лимит вызовов серверной функции броска: 30 в минуту на игрока.
@@ -1752,6 +1836,7 @@ revoke all on function private.comp_skips_to_forfeit() from public, anon, authen
 revoke all on function private.comp_sim_version() from public, anon, authenticated;
 revoke all on function private.comp_max_angle() from public, anon, authenticated;
 revoke all on function private.comp_min_power() from public, anon, authenticated;
+revoke all on function private.comp_layout_ids() from public, anon, authenticated;
 revoke all on function private.is_comp_member(uuid) from public, anon, authenticated;
 revoke all on function private.is_comp_topic_member(text) from public, anon, authenticated;
 revoke all on function private.comp_touch() from public, anon, authenticated;
@@ -1790,6 +1875,8 @@ revoke all on function public.comp_forfeit(uuid) from public, anon, authenticate
 revoke all on function public.comp_settle_stale(uuid) from public, anon, authenticated;
 revoke all on function public.comp_state(uuid) from public, anon, authenticated;
 revoke all on function public.my_comp_history(int) from public, anon, authenticated;
+revoke all on function public.comp_set_layout(uuid, text) from public, anon, authenticated;
+revoke all on function public.comp_rematch(uuid, text) from public, anon, authenticated;
 
 grant execute on function public.comp_open(text, text, text) to authenticated;
 grant execute on function public.comp_join(text, text, text) to authenticated;
@@ -1806,6 +1893,8 @@ grant execute on function public.comp_forfeit(uuid) to authenticated;
 grant execute on function public.comp_settle_stale(uuid) to authenticated;
 grant execute on function public.comp_state(uuid) to authenticated;
 grant execute on function public.my_comp_history(int) to authenticated;
+grant execute on function public.comp_set_layout(uuid, text) to authenticated;
+grant execute on function public.comp_rematch(uuid, text) to authenticated;
 
 revoke all on function public.comp_count_call(uuid) from public, anon, authenticated;
 revoke all on function public.comp_begin_throw(uuid, uuid, int) from public, anon, authenticated;

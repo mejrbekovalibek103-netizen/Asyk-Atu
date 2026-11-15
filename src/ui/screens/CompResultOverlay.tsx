@@ -1,16 +1,25 @@
+import { useState } from 'react';
 import { useAccount } from '../../net/account';
-import { freeCount } from '../../net/collection';
+import { freeCount, STAKE_SIZE } from '../../net/collection';
 import type { CompState } from '../../net/competitive';
 import { PLAYER_STYLE } from '../../game/rules/MatchRules';
 import { AsykIcon } from '../components/AsykIcon';
+import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Ornament } from '../components/Ornament';
 import { plural } from '../format';
 
 interface Props {
   state: CompState;
+  /**
+   * «Реванш» (сразу ставка и старт, как только оба готовы) или «В комнату» (лобби, где хозяин может сменить кон).
+   * Промис — переход в лобби следующего матча; отказ — текст ошибки показывается здесь же.
+   */
+  onRematch: (kind: 'rematch' | 'room') => Promise<void>;
   onCollection: () => void;
   onMenu: () => void;
+  /** Текст ошибки → строка для игрока. */
+  errorText: (e: unknown) => string;
 }
 
 const asyks = (n: number) => `${n} ${plural(n, ['асык', 'асыка', 'асыков'])}`;
@@ -66,7 +75,9 @@ function SlotIcons({ state, list, label }: { state: CompState; list: number[]; l
 }
 
 /** Итоги матча на асыки: «Твой улов», «Вернулись», «Ушли» и итог вида «+3». */
-export function CompResultOverlay({ state, onCollection, onMenu }: Props) {
+export function CompResultOverlay({ state, onRematch, onCollection, onMenu, errorText }: Props) {
+  const [busy, setBusy] = useState<'rematch' | 'room' | null>(null);
+  const [error, setError] = useState<string | null>(null);
   // база уже раздала асыки — перечитываем коллекцию, чтобы показать, сколько их теперь
   const { state: account } = useAccount();
   const r = state.result;
@@ -77,6 +88,21 @@ export function CompResultOverlay({ state, onCollection, onMenu }: Props) {
   let title = 'Считаем итоги…';
   if (r?.refunded) title = 'Ставки вернулись';
   else if (r) title = r.delta > 0 ? 'Ты в плюсе!' : r.delta < 0 ? 'В этот раз не повезло' : 'Остался при своих';
+
+  const free = account.status === 'signedIn' && account.asyks ? freeCount(account.asyks) : null;
+  // невыбитые и выигранные асыки уже вернулись — для реванша нужно 5 свободных
+  const canRematch = free === null || free >= STAKE_SIZE;
+  const called = state.match.nextCode !== null;
+  const go = async (kind: 'rematch' | 'room') => {
+    setBusy(kind);
+    setError(null);
+    try {
+      await onRematch(kind);
+    } catch (e) {
+      setError(errorText(e));
+      setBusy(null);
+    }
+  };
 
   const collection =
     account.status === 'signedIn' && account.asyks
@@ -136,12 +162,36 @@ export function CompResultOverlay({ state, onCollection, onMenu }: Props) {
         </p>
       )}
 
+      {called && busy === null && (
+        <p className="lobby-status lobby-status--ready comp-rematch-call" role="status">
+          Соперник зовёт на реванш!
+        </p>
+      )}
+      {!canRematch && (
+        <p className="setup__hint" role="status">
+          Для реванша нужно {STAKE_SIZE} свободных асыков, у тебя {free}.
+        </p>
+      )}
+      {error && (
+        <p className="setup__hint code-hint code-hint--error" role="alert">
+          {error}
+        </p>
+      )}
+
       <div className="result-actions">
-        <button className="btn btn--primary" onClick={onCollection} data-autofocus>
+        <button className="btn btn--primary" onClick={() => void go('rematch')} disabled={busy !== null || !canRematch} data-autofocus>
+          <Icon name="restart" /> {busy === 'rematch' ? 'Готовим реванш…' : 'Реванш'}
+        </button>
+        <button className="btn result-actions__wide" onClick={() => void go('room')} disabled={busy !== null}>
+          <Icon name="users" /> {busy === 'room' ? 'Открываем…' : 'В комнату'}
+        </button>
+      </div>
+      <div className="result-actions result-actions--minor">
+        <button className="btn btn--ghost" onClick={onCollection} disabled={busy !== null}>
           В коллекцию
         </button>
-        <button className="btn btn--ghost" onClick={onMenu}>
-          В меню
+        <button className="btn btn--ghost" onClick={onMenu} disabled={busy !== null}>
+          <Icon name="home" /> В меню
         </button>
       </div>
     </Modal>

@@ -142,6 +142,7 @@ export const COMP_ERROR_TEXT = {
   expired: 'Время лобби вышло.',
   full: 'Мест нет.',
   not_member: 'Ты не в этом матче.',
+  not_over: 'Матч ещё идёт.',
   // лобби
   not_host: 'Это может только хозяин.',
   bad_slot: 'Такого игрока нет.',
@@ -318,6 +319,8 @@ export interface CompMatch {
   startedAt: number | null;
   settledAt: number | null;
   endReason: CompEndReason | null;
+  /** Реванш: код следующего матча той же компании (пока в него можно войти или он идёт), иначе null. */
+  nextCode: string | null;
 }
 
 export interface CompMe {
@@ -441,7 +444,11 @@ function parseMatch(raw: unknown): CompMatch | null {
   const throwNo = int(raw.throw_no, 0, MAX_THROW_NO);
   const playersRev = raw.players_rev === undefined ? 0 : int(raw.players_rev, 0, MAX_COUNTER);
   const pending = bool(raw.pending);
+  // поля next_code нет у старой базы — значит, реванша нет
+  const nextCode = raw.next_code === undefined || raw.next_code === null ? null : normalizeCompCode(raw.next_code);
   if (
+    nextCode === undefined ||
+    (raw.next_code !== undefined && raw.next_code !== null && !nextCode) ||
     !id ||
     !joinCode ||
     !layoutId ||
@@ -497,6 +504,7 @@ function parseMatch(raw: unknown): CompMatch | null {
     pending,
     playersRev,
     endReason: endReason(raw.end_reason),
+    nextCode: nextCode ?? null,
   };
 }
 
@@ -820,6 +828,31 @@ export async function compLeave(matchId: string): Promise<void> {
 /** Хозяин запускает проверку готовности (60 с). */
 export function compStart(matchId: string): Promise<CompState> {
   return stateCall('comp_start', { p_match: needMatch(matchId) });
+}
+
+/** Хозяин меняет кон в лобби (до жребия). */
+export function compSetLayout(matchId: string, layoutId: StakeLayoutId): Promise<CompState> {
+  if (!isStakeLayout(layoutId)) return Promise.reject(new CompError('bad_layout'));
+  return stateCall('comp_set_layout', { p_match: needMatch(matchId), p_layout: layoutId });
+}
+
+export interface CompRematchResult extends CompOpenResult {
+  /** true — это нажатие создало новое лобби (ты в нём хозяин); false — вошёл в лобби соперника. */
+  created: boolean;
+}
+
+export function parseRematchResult(raw: unknown): CompRematchResult | null {
+  const base = parseOpenResult(raw);
+  if (!base || !isObj(raw) || typeof raw.created !== 'boolean') return null;
+  return { ...base, created: raw.created };
+}
+
+/** Реванш / «В комнату» после матча: первый нажавший создаёт лобби с тем же коном, остальные входят в него. */
+export async function compRematch(matchId: string, clientId = compClientId()): Promise<CompRematchResult> {
+  const data = await rpc('comp_rematch', { p_match: needMatch(matchId), p_client_id: clientId });
+  const r = parseRematchResult(data);
+  if (!r) throw new CompError('bad_response');
+  return r;
 }
 
 /** «Я здесь». Последний нажавший переводит матч в active (жребий мест и кона). */
@@ -1433,6 +1466,10 @@ export interface CompMatchActions {
   leave(): Promise<void>;
   forfeit(): Promise<void>;
   settleStale(): Promise<void>;
+  /** Хозяин меняет кон в лобби. */
+  setLayout(layoutId: StakeLayoutId): Promise<void>;
+  /** После матча: войти в лобби реванша (создать, если его ещё нет). */
+  rematch(): Promise<CompRematchResult>;
   /**
    * Бросок через сервер (номер — match.throwNo + 1). Запись приходит в onThrow (и из ответа, и из канала — без повторов);
    * промис — тот же результат целиком. Отказ — CompError.
@@ -1445,6 +1482,9 @@ export interface CompMatchActions {
   /** Прицел соперника (throwNo — для какого броска, если указан). Возвращает отписку. */
   onAim(fn: (aim: CompAim | null, throwNo: number | null) => void): () => void;
 }
+
+/** Сколько после конца матча ждём, что соперник позовёт на реванш (столько же живёт доступ к каналу матча). */
+export const REMATCH_WATCH_MS = 10 * 60_000;
 
 /** Опрос comp_state и пульс (docs 0.1: пульс каждые 5 с). */
 export const COMP_POLL_MS = 5_000;
@@ -1577,8 +1617,14 @@ export class CompMatchClient {
     if (this.stopped || this.snap.error) return;
     const st = this.snap.state;
     if (st && isCompOver(st.match.status)) {
-      if (this.poll !== null) clearInterval(this.poll);
-      this.poll = null;
+      // после конца ждём только код реванша (соперник может позвать) — без пульса и не дольше 10 минут
+      const since = st.match.settledAt ?? st.match.createdAt;
+      if (st.match.nextCode !== null || (since !== null && serverNow(st) - since > REMATCH_WATCH_MS)) {
+        if (this.poll !== null) clearInterval(this.poll);
+        this.poll = null;
+        return;
+      }
+      if (visible()) void this.refresh();
       return;
     }
     if (visible() && st && st.me.lobbySlot !== null) {
@@ -1741,6 +1787,8 @@ export class CompMatchClient {
     leave: () => this.thenRefresh(compLeave(this.matchId)),
     forfeit: () => this.withState(compForfeit(this.matchId)),
     settleStale: () => this.withState(compSettleStale(this.matchId)),
+    setLayout: (layoutId) => this.withState(compSetLayout(this.matchId, layoutId)),
+    rematch: () => compRematch(this.matchId),
     throwAsyk: async (angle, power) => {
       const st = this.snap.state;
       if (!st) throw new CompError('not_active');
@@ -1787,6 +1835,8 @@ const NO_ACTIONS: CompMatchActions = {
   leave: noMatch,
   forfeit: noMatch,
   settleStale: noMatch,
+  setLayout: noMatch,
+  rematch: noMatch,
   throwAsyk: noMatch,
   sendAim: () => undefined,
   onThrow: () => () => undefined,
