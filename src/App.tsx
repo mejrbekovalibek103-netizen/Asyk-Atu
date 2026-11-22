@@ -14,6 +14,7 @@ import { MatchScreen } from './ui/screens/MatchScreen';
 import { MatchSetupScreen } from './ui/screens/MatchSetupScreen';
 // онлайн-часть (и библиотека Supabase) грузится отдельным фрагментом — только когда открывается комната
 const CollectionScreen = lazy(() => import('./ui/screens/CollectionScreen').then((m) => ({ default: m.CollectionScreen })));
+const RatingScreen = lazy(() => import('./ui/screens/RatingScreen').then((m) => ({ default: m.RatingScreen })));
 const RoomScreen = lazy(() => import('./ui/screens/RoomScreen').then((m) => ({ default: m.RoomScreen })));
 // соревновательный режим «на асыки» — тоже отдельным фрагментом
 const CompetitiveSetupScreen = lazy(() => import('./ui/screens/CompetitiveLobbyScreen').then((m) => ({ default: m.CompetitiveSetupScreen })));
@@ -21,6 +22,8 @@ const CompetitiveLobbyScreen = lazy(() => import('./ui/screens/CompetitiveLobbyS
 import { makeClientId, makeRoomCode } from './net/protocol';
 import { loadRoomSession, saveRoomSession } from './net/session';
 import { MenuScreen } from './ui/screens/MenuScreen';
+import { BottomNav, hasBottomNav } from './ui/components/BottomNav';
+import { onlineAvailable } from './net/config';
 import { RecordsScreen } from './ui/screens/RecordsScreen';
 
 const LEVEL_IDS = LEVELS.map((l) => l.id);
@@ -35,6 +38,7 @@ const TITLES: Record<Route['name'], string> = {
   MATCH_SETUP: 'Игра вдвоём · Асық ату',
   ONLINE_SETUP: 'Онлайн игра · Асық ату',
   COLLECTION: 'Моя коллекция · Асық ату',
+  RATING: 'Рейтинг · Асық ату',
   MATCH: 'Матч · Асық ату',
   ROOM: 'Онлайн-матч · Асық ату',
   COMP_SETUP: 'Матч на асыки · Асық ату',
@@ -218,130 +222,154 @@ export function App() {
     return () => window.removeEventListener('pointerdown', unlock);
   }, []);
 
-  switch (route.name) {
-    case 'MENU':
-      return <MenuScreen save={save} muted={save.settings.muted} onToggleMute={toggleMute} onNavigate={navigate} />;
-    case 'HOW_TO':
-      return <HowToScreen onNavigate={navigate} onBack={back} />;
-    case 'LEVEL_SELECT':
-      return <LevelSelectScreen save={save} onNavigate={navigate} onBack={() => navigate({ name: 'MENU' })} />;
-    case 'RECORDS':
-      return <RecordsScreen save={save} onReset={resetProgress} onNavigate={navigate} onBack={back} />;
-    case 'ABOUT':
-      return <AboutScreen onNavigate={navigate} onBack={back} />;
-    case 'MATCH_SETUP':
-    case 'ONLINE_SETUP':
-      return (
-        <MatchSetupScreen
-          key={route.name}
-          mode={route.name === 'ONLINE_SETUP' ? 'online' : 'local'}
-          initialNames={save.settings.duelNames}
-          initialOnlineName={save.settings.onlineName}
-          initialLayoutId={save.settings.duelLayout}
-          initialHandoff={save.settings.duelHandoff}
-          onStart={startMatch}
-          onCreateRoom={createRoom}
-          onJoinRoom={joinRoom}
-          onCollection={() => navigate({ name: 'COLLECTION' })}
-          onCompetitive={() => navigate({ name: 'COMP_SETUP' })}
-          onBack={() => navigate({ name: 'MENU' })}
-        />
-      );
-    case 'COLLECTION':
-      return (
-        <Suspense fallback={<LoadingPage />}>
-          <CollectionScreen
-            authError={!!oauth?.error}
-            onOpenMatch={(code) => navigate({ name: 'COMP', code })}
+  // нижняя панель — только на главной, в коллекции и в рейтинге (и только если онлайн включён в сборке)
+  const nav = onlineAvailable && hasBottomNav(route.name) ? route.name : null;
+  useEffect(() => {
+    document.body.classList.toggle('has-bottom-nav', nav !== null);
+  }, [nav]);
+
+  const screen = renderScreen();
+  return nav ? (
+    <>
+      {screen}
+      <BottomNav current={nav} onNavigate={navigate} />
+    </>
+  ) : (
+    screen
+  );
+
+  function renderScreen() {
+    switch (route.name) {
+      case 'MENU':
+        return <MenuScreen save={save} muted={save.settings.muted} onToggleMute={toggleMute} onNavigate={navigate} />;
+      case 'HOW_TO':
+        return <HowToScreen onNavigate={navigate} onBack={back} />;
+      case 'LEVEL_SELECT':
+        return <LevelSelectScreen save={save} onNavigate={navigate} onBack={() => navigate({ name: 'MENU' })} />;
+      case 'RECORDS':
+        return <RecordsScreen save={save} onReset={resetProgress} onNavigate={navigate} onBack={back} />;
+      case 'ABOUT':
+        return <AboutScreen onNavigate={navigate} onBack={back} />;
+      case 'MATCH_SETUP':
+      case 'ONLINE_SETUP':
+        return (
+          <MatchSetupScreen
+            key={route.name}
+            mode={route.name === 'ONLINE_SETUP' ? 'online' : 'local'}
+            initialNames={save.settings.duelNames}
+            initialOnlineName={save.settings.onlineName}
+            initialLayoutId={save.settings.duelLayout}
+            initialHandoff={save.settings.duelHandoff}
+            onStart={startMatch}
+            onCreateRoom={createRoom}
+            onJoinRoom={joinRoom}
+            onCollection={() => navigate({ name: 'COLLECTION' })}
             onCompetitive={() => navigate({ name: 'COMP_SETUP' })}
-            onBack={() => navigate({ name: 'ONLINE_SETUP' })}
+            onBack={() => navigate({ name: 'MENU' })}
           />
-        </Suspense>
-      );
-    case 'COMP_SETUP':
-      return (
-        <Suspense fallback={<LoadingPage />}>
-          <CompetitiveSetupScreen
-            defaultName={save.settings.onlineName}
-            authError={!!oauth?.error}
-            onRememberName={rememberOnlineName}
-            onOpenMatch={(code) => navigate({ name: 'COMP', code })}
-            onCollection={() => navigate({ name: 'COLLECTION' })}
-            onBack={() => navigate({ name: 'ONLINE_SETUP' })}
-          />
-        </Suspense>
-      );
-    case 'COMP':
-      return (
-        <Suspense fallback={<LoadingPage />}>
-          <CompetitiveLobbyScreen
-            key={route.code}
-            code={route.code}
-            defaultName={save.settings.onlineName}
-            authError={!!oauth?.error}
+        );
+      case 'RATING':
+        return (
+          <Suspense fallback={<LoadingPage />}>
+            <RatingScreen authError={!!oauth?.error} />
+          </Suspense>
+        );
+      case 'COLLECTION':
+        return (
+          <Suspense fallback={<LoadingPage />}>
+            <CollectionScreen
+              authError={!!oauth?.error}
+              onOpenMatch={(code) => navigate({ name: 'COMP', code })}
+              onCompetitive={() => navigate({ name: 'COMP_SETUP' })}
+              onBack={() => navigate({ name: 'ONLINE_SETUP' })}
+            />
+          </Suspense>
+        );
+      case 'COMP_SETUP':
+        return (
+          <Suspense fallback={<LoadingPage />}>
+            <CompetitiveSetupScreen
+              defaultName={save.settings.onlineName}
+              authError={!!oauth?.error}
+              onRememberName={rememberOnlineName}
+              onOpenMatch={(code) => navigate({ name: 'COMP', code })}
+              onCollection={() => navigate({ name: 'COLLECTION' })}
+              onBack={() => navigate({ name: 'ONLINE_SETUP' })}
+            />
+          </Suspense>
+        );
+      case 'COMP':
+        return (
+          <Suspense fallback={<LoadingPage />}>
+            <CompetitiveLobbyScreen
+              key={route.code}
+              code={route.code}
+              defaultName={save.settings.onlineName}
+              authError={!!oauth?.error}
+              muted={save.settings.muted}
+              reducedMotion={reducedMotion}
+              onToggleMute={toggleMute}
+              onRememberName={rememberOnlineName}
+              onOpenMatch={(code) => navigate({ name: 'COMP', code })}
+              onSetup={() => navigate({ name: 'COMP_SETUP' })}
+              onCollection={() => navigate({ name: 'COLLECTION' })}
+              onMenu={() => navigate({ name: 'MENU' })}
+            />
+          </Suspense>
+        );
+      case 'ROOM':
+        return (
+          <Suspense
+            fallback={
+              <main className="page page--doc">
+                <p className="doc__lead" role="status">
+                  Загружаем онлайн-режим…
+                </p>
+              </main>
+            }
+          >
+            <RoomScreen
+              key={route.code}
+              code={route.code}
+              defaultName={save.settings.onlineName}
+              muted={save.settings.muted}
+              reducedMotion={reducedMotion}
+              onToggleMute={toggleMute}
+              onRememberName={rememberOnlineName}
+              onExit={() => navigate({ name: 'MENU' })}
+            />
+          </Suspense>
+        );
+      case 'MATCH':
+        if (!match) return null;
+        return (
+          <MatchScreen
+            key={match.id}
+            config={match.config}
+            restore={match.restore}
             muted={save.settings.muted}
             reducedMotion={reducedMotion}
             onToggleMute={toggleMute}
-            onRememberName={rememberOnlineName}
-            onOpenMatch={(code) => navigate({ name: 'COMP', code })}
-            onSetup={() => navigate({ name: 'COMP_SETUP' })}
-            onCollection={() => navigate({ name: 'COLLECTION' })}
-            onMenu={() => navigate({ name: 'MENU' })}
+            onRematch={rematch}
+            onNavigate={navigate}
           />
-        </Suspense>
-      );
-    case 'ROOM':
-      return (
-        <Suspense
-          fallback={
-            <main className="page page--doc">
-              <p className="doc__lead" role="status">
-                Загружаем онлайн-режим…
-              </p>
-            </main>
-          }
-        >
-          <RoomScreen
-            key={route.code}
-            code={route.code}
-            defaultName={save.settings.onlineName}
+        );
+      case 'PLAYING':
+        if (!playLevel || invalidPlay) return null;
+        return (
+          <GameScreen
+            key={playLevel.id}
+            level={playLevel}
+            tutorial={!save.settings.tutorialDone}
             muted={save.settings.muted}
             reducedMotion={reducedMotion}
+            isUnlocked={isUnlocked}
             onToggleMute={toggleMute}
-            onRememberName={rememberOnlineName}
-            onExit={() => navigate({ name: 'MENU' })}
+            onRoundComplete={onRoundComplete}
+            onTutorialDone={onTutorialDone}
+            onNavigate={navigate}
           />
-        </Suspense>
-      );
-    case 'MATCH':
-      if (!match) return null;
-      return (
-        <MatchScreen
-          key={match.id}
-          config={match.config}
-          restore={match.restore}
-          muted={save.settings.muted}
-          reducedMotion={reducedMotion}
-          onToggleMute={toggleMute}
-          onRematch={rematch}
-          onNavigate={navigate}
-        />
-      );
-    case 'PLAYING':
-      if (!playLevel || invalidPlay) return null;
-      return (
-        <GameScreen
-          key={playLevel.id}
-          level={playLevel}
-          tutorial={!save.settings.tutorialDone}
-          muted={save.settings.muted}
-          reducedMotion={reducedMotion}
-          isUnlocked={isUnlocked}
-          onToggleMute={toggleMute}
-          onRoundComplete={onRoundComplete}
-          onTutorialDone={onTutorialDone}
-          onNavigate={navigate}
-        />
-      );
+        );
+    }
   }
 }

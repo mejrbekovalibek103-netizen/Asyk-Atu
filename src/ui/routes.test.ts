@@ -6,7 +6,8 @@ describe('маршруты: онлайн и коллекция', () => {
     expect(hashToRoute('#/duel')).toEqual({ name: 'MATCH_SETUP' });
     expect(hashToRoute('#/online')).toEqual({ name: 'ONLINE_SETUP' });
     expect(hashToRoute('#/collection')).toEqual({ name: 'COLLECTION' });
-    for (const name of ['MATCH_SETUP', 'ONLINE_SETUP', 'COLLECTION'] as const) expect(hashToRoute(routeToHash({ name }))).toEqual({ name });
+    expect(hashToRoute('#/rating')).toEqual({ name: 'RATING' });
+    for (const name of ['MATCH_SETUP', 'ONLINE_SETUP', 'COLLECTION', 'RATING'] as const) expect(hashToRoute(routeToHash({ name }))).toEqual({ name });
   });
 
   it('неизвестный адрес ведёт в меню', () => {

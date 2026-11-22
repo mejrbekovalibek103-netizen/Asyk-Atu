@@ -17,6 +17,8 @@ export type Route =
   | { name: 'MATCH_SETUP' }
   | { name: 'ONLINE_SETUP' }
   | { name: 'COLLECTION' }
+  /** Рейтинг игроков и данные своего аккаунта. */
+  | { name: 'RATING' }
   | { name: 'MATCH' }
   | { name: 'ROOM'; code: string }
   /** Соревновательный режим «на асыки»: создать матч или войти по коду. */
@@ -54,6 +56,8 @@ export function routeToHash(r: Route): string {
       return '#/online';
     case 'COLLECTION':
       return '#/collection';
+    case 'RATING':
+      return '#/rating';
     case 'MATCH':
       return '#/duel/play';
     case 'ROOM':
@@ -86,6 +90,7 @@ export function hashToRoute(hash: string): Route {
   if (h === 'duel') return { name: 'MATCH_SETUP' };
   if (h === 'online') return { name: 'ONLINE_SETUP' };
   if (h === 'collection') return { name: 'COLLECTION' };
+  if (h === 'rating') return { name: 'RATING' };
   if (h === 'duel/play') return { name: 'MATCH' };
   const room = /^room\/([A-Za-z0-9-]{4,24})$/.exec(h);
   if (room) {

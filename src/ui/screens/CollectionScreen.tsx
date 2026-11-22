@@ -181,7 +181,7 @@ export function CollectionScreen({ authError, onOpenMatch, onCompetitive, onBack
             </section>
             <section className="lobby-card collection-card">
               <p className="doc__muted">
-                Ты вошёл как <b>{state.email || 'игрок Google'}</b>. Коллекция привязана к этому аккаунту Google.
+                Ты вошёл через Google, коллекция привязана к этому аккаунту. Твой ID, ник и счёт — во вкладке «Рейтинг».
               </p>
               <button className="btn btn--ghost" onClick={() => void signOut()}>
                 Выйти на этом устройстве

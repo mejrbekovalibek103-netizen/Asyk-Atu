@@ -2410,3 +2410,207 @@ button {
 .result-actions__wide {
   grid-column: 1 / -1;
 }
+
+/* ——— нижняя навигация: Главная · Коллекция · Рейтинг ——— */
+.bottom-nav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  background: rgba(255, 255, 255, 0.96);
+  border-top: 1px solid var(--line);
+  box-shadow: 0 -6px 24px rgba(40, 30, 10, 0.08);
+  padding: 6px max(8px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+}
+.bottom-nav ul {
+  list-style: none;
+  margin: 0 auto;
+  padding: 0;
+  max-width: 520px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+.bottom-nav__item {
+  width: 100%;
+  min-height: 54px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border-radius: 14px;
+  color: var(--muted);
+  font-weight: 800;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+.bottom-nav__item:hover {
+  color: var(--ink);
+}
+.bottom-nav__item--on {
+  color: var(--sky-600);
+  background: var(--sky-50);
+}
+.bottom-nav__item:focus-visible {
+  box-shadow: var(--focus);
+}
+.bottom-nav__icon {
+  display: grid;
+  place-items: center;
+  height: 26px;
+}
+/* место под панель, чтобы она не закрывала низ страницы */
+body.has-bottom-nav .page {
+  padding-bottom: calc(88px + env(safe-area-inset-bottom));
+}
+
+/* ——— рейтинг и аккаунт ——— */
+.account-card {
+  display: grid;
+  gap: 10px;
+}
+.account-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.account-card__name {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 22px;
+  line-height: 1.2;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.account-card__head .doc__muted {
+  margin: 2px 0 0;
+}
+.account-card__edit {
+  min-height: 40px;
+  padding: 6px 14px;
+  font-size: 14px;
+}
+.account-card__form {
+  display: grid;
+  gap: 8px;
+}
+.account-card__out {
+  justify-self: start;
+}
+.account-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 4px 0 0;
+}
+.account-stats div {
+  background: var(--bg-2);
+  border-radius: 14px;
+  padding: 10px 8px;
+  text-align: center;
+}
+.account-stats dt {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--muted);
+}
+.account-stats dd {
+  margin: 2px 0 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 24px;
+  color: var(--ink);
+}
+.rating-card {
+  margin-top: 16px;
+}
+.rating-tabs {
+  margin-top: 0;
+  grid-template-columns: repeat(3, 1fr);
+}
+.rating-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.rating-list--me {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+.rating-row {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+}
+.rating-row:nth-child(odd) {
+  background: var(--bg);
+}
+.rating-row--me {
+  background: var(--sky-50) !important;
+  outline: 2px solid var(--sky);
+}
+.rating-row__place {
+  font-family: var(--font-display);
+  font-weight: 700;
+  text-align: center;
+  color: var(--muted);
+}
+.rating-row--top1 .rating-row__place {
+  color: var(--sun-600);
+}
+.rating-row--top2 .rating-row__place,
+.rating-row--top3 .rating-row__place {
+  color: var(--sky-600);
+}
+.rating-row__name {
+  font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rating-row__name small {
+  color: var(--muted);
+  font-weight: 700;
+}
+.rating-row__value {
+  font-family: var(--font-display);
+  font-weight: 700;
+}
+.rating-note {
+  margin-top: 10px;
+}
+/* кнопки панели и вкладок рейтинга — без стандартной рамки браузера */
+.bottom-nav__item,
+.rating-tabs .mode-switch__option {
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 800;
+  appearance: none;
+}
+.bottom-nav__item {
+  font-size: 12px;
+}
+.rating-tabs .mode-switch__option {
+  font-size: 15px;
+}
+.rating-tabs .mode-switch__option--on {
+  background: var(--surface);
+}
+.bottom-nav__item--on {
+  background: var(--sky-50);
+}
