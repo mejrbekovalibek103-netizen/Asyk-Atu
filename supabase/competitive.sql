@@ -1,4 +1,4 @@
--- «Асық ату»: соревновательный режим «на асыки» (матч на двоих, кон из 10 асыков).
+-- «Асық ату»: соревновательный режим «на асыки» (матч на 2–4 игроков, кон из 10 / 15 / 20 асыков).
 --
 -- Как применить: панель Supabase → SQL Editor → New query → вставить весь файл → Run.
 -- Сначала должен быть выполнен schema.sql. Этот скрипт можно запускать повторно:
@@ -24,12 +24,12 @@ create schema if not exists private;          -- PostgREST эту схему н�
 revoke all on schema private from public, anon;
 grant usage on schema private to authenticated; -- нужно только для функций-помощников в политиках RLS
 
--- ——— константы режима (поднять до 3–4 игроков — поменять здесь) ———
+-- ——— константы режима ———
 
--- Сколько игроков пускает матч. Первая версия — только на двоих.
+-- Сколько игроков пускает матч (начать хозяин может и вдвоём, и втроём). Больше 4 схема не допускает.
 create or replace function private.comp_max_players() returns int
   language sql immutable security definer set search_path = ''
-as $$ select 2 $$;
+as $$ select 4 $$;
 
 -- Сколько асыков ставит каждый игрок (кон = 5 · число игроков).
 create or replace function private.comp_stake_size() returns int
@@ -656,7 +656,79 @@ begin
 end;
 $$;
 
--- Ленивая уборка одного матча: просроченное лобби или «Я здесь» — возврат ставок;
+-- Убрать игрока из матча до старта: его ставка возвращается (строка матча уже заблокирована, forming или ready).
+create or replace function private.comp_drop_player(p_match uuid, p_user uuid) returns void
+  language plpgsql volatile security definer set search_path = ''
+as $$
+begin
+  perform 1 from public.asyks a where a.locked_match = p_match and a.owner = p_user order by a.id for update;
+  update public.asyks a set locked_match = null where a.locked_match = p_match and a.owner = p_user;
+  delete from public.comp_players p where p.match_id = p_match and p.user_id = p_user;
+end;
+$$;
+
+-- Старт, если на проверке готовности нажали «Я здесь» все оставшиеся (строка матча уже заблокирована, статус ready).
+-- Число игроков — сколько их сейчас: кто вышел или не подтвердил, уже убран. Меньше двоих — ничего не делает.
+create or replace function private.comp_try_begin(p_match uuid) returns void
+  language plpgsql volatile security definer set search_path = ''
+as $$
+declare
+  v_n int;
+  v_wait int;
+begin
+  select count(*), count(*) filter (where not p.ready) into v_n, v_wait
+  from public.comp_players p where p.match_id = p_match;
+  if v_n < 2 then
+    return;
+  end if;
+  update public.comp_matches m set players = v_n where m.id = p_match and m.players is distinct from v_n;
+  if v_wait > 0 then
+    return;
+  end if;
+  perform private.comp_deal(p_match);
+  update public.comp_matches m
+     set status = 'active',
+         current_seat = 0,
+         throw_no = 0,
+         started_at = now(),
+         turn_started_at = now(),
+         turn_deadline = now() + make_interval(secs => private.comp_turn_seconds()),
+         ready_deadline = null
+   where m.id = p_match;
+end;
+$$;
+
+-- Срок «Я здесь» вышел (строка матча уже заблокирована, статус ready). Остаются те, кто подтвердил и сейчас в сети:
+-- если их двое и больше — играют без остальных (ставки остальных вернулись), иначе матч отменяется с возвратом.
+-- «Сейчас в сети» обязательно: иначе забытый всеми матч можно было бы запустить через час,
+-- и отсутствующие проиграли бы его на пропусках.
+create or replace function private.comp_ready_timeout(p_match uuid) returns void
+  language plpgsql volatile security definer set search_path = ''
+as $$
+declare
+  v_here int;
+  v_user uuid;
+begin
+  select count(*) into v_here from public.comp_players p
+  where p.match_id = p_match and p.ready and coalesce(p.last_seen > now() - interval '15 seconds', false);
+  if v_here < 2 then
+    perform private.comp_refund(p_match, 'not_ready');
+    return;
+  end if;
+  for v_user in
+    select p.user_id from public.comp_players p
+    where p.match_id = p_match
+      and not (p.ready and coalesce(p.last_seen > now() - interval '15 seconds', false))
+    order by p.user_id
+  loop
+    perform private.comp_drop_player(p_match, v_user);
+  end loop;
+  perform private.comp_try_begin(p_match);
+end;
+$$;
+
+-- Ленивая уборка одного матча: просроченное лобби — возврат ставок; просроченное «Я здесь» —
+-- игра без неподтвердивших или возврат (comp_ready_timeout);
 -- p_include_active — ещё и зависший active (нет изменений 15 мин) — раздача по уже выбитому.
 create or replace function private.comp_lazy_expire(p_match uuid, p_include_active boolean) returns void
   language plpgsql volatile security definer set search_path = ''
@@ -678,9 +750,10 @@ begin
   -- перепроверка под блокировкой
   select m.status, m.ready_deadline, m.updated_at into v_status, v_rd, v_upd
   from public.comp_matches m where m.id = p_match for update;
-  if v_status in ('forming', 'ready') and coalesce(v_rd < now(), false) then
-    perform private.comp_refund(p_match,
-      case when v_status = 'forming' then 'lobby_expired' else 'not_ready' end);
+  if v_status = 'forming' and coalesce(v_rd < now(), false) then
+    perform private.comp_refund(p_match, 'lobby_expired');
+  elsif v_status = 'ready' and coalesce(v_rd < now(), false) then
+    perform private.comp_ready_timeout(p_match);
   elsif p_include_active and v_status = 'active' and v_upd < now() - interval '15 minutes' then
     perform private.comp_settle(p_match, 'stale');
   end if;
@@ -1024,6 +1097,8 @@ begin
   perform private.comp_require_member(p_match, v_uid);
   -- сначала уборка (она блокирует матч, затем игроков), потом своя строка: порядок «матч → игроки»
   perform private.comp_lazy_expire(p_match, false);
+  -- не подтвердил «Я здесь» — в матче его больше нет (откат отменит и уборку: её сделает вызов оставшихся)
+  perform private.comp_require_member(p_match, v_uid);
   update public.comp_players p set client_id = p_client_id, last_seen = now()
    where p.match_id = p_match and p.user_id = v_uid
      and exists (select 1 from public.comp_matches m
@@ -1061,11 +1136,9 @@ begin
   if not found then
     raise exception 'not_found' using errcode = 'P0001';
   end if;
-  perform 1 from public.asyks a where a.locked_match = p_match and a.owner = v_target order by a.id for update;
-  update public.asyks a set locked_match = null where a.locked_match = p_match and a.owner = v_target;
   insert into private.comp_kicked (match_id, user_id) values (p_match, v_target)
   on conflict (match_id, user_id) do nothing;
-  delete from public.comp_players p where p.match_id = p_match and p.user_id = v_target;
+  perform private.comp_drop_player(p_match, v_target);
 end;
 $$;
 
@@ -1137,7 +1210,8 @@ end;
 $$;
 
 -- Выйти: в лобби — ставка возвращается (хозяин — матч отменяется целиком);
--- на проверке готовности — отмена матча; во время игры — это сдача (асыки остаются в коне).
+-- на проверке готовности — ставка возвращается, остальные (если их двое и больше) играют без него, иначе отмена;
+-- во время игры — это сдача (асыки остаются в коне).
 create or replace function public.comp_leave(p_match uuid) returns void
   language plpgsql volatile security definer set search_path = ''
 as $$
@@ -1145,8 +1219,10 @@ declare
   v_uid uuid := private.comp_caller();
   v_status text;
   v_host uuid;
+  v_rd timestamptz;
 begin
-  select m.status, m.host into v_status, v_host from public.comp_matches m where m.id = p_match for update;
+  select m.status, m.host, m.ready_deadline into v_status, v_host, v_rd
+  from public.comp_matches m where m.id = p_match for update;
   if not found then
     raise exception 'not_found' using errcode = 'P0001';
   end if;
@@ -1155,12 +1231,21 @@ begin
     if v_host = v_uid then
       perform private.comp_refund(p_match, 'host_left');
     else
-      perform 1 from public.asyks a where a.locked_match = p_match and a.owner = v_uid order by a.id for update;
-      update public.asyks a set locked_match = null where a.locked_match = p_match and a.owner = v_uid;
-      delete from public.comp_players p where p.match_id = p_match and p.user_id = v_uid;
+      perform private.comp_drop_player(p_match, v_uid);
     end if;
   elsif v_status = 'ready' then
-    perform private.comp_refund(p_match, 'left');
+    if (select count(*) from public.comp_players p where p.match_id = p_match) <= 2 then
+      perform private.comp_refund(p_match, 'left');
+    else
+      -- жребия ещё не было (comp_deal — только при старте): выходом его не перебросить
+      perform private.comp_drop_player(p_match, v_uid);
+      -- срок уже вышел — запускаем, только если оставшиеся в сети (comp_ready_timeout)
+      if coalesce(v_rd < now(), false) then
+        perform private.comp_ready_timeout(p_match);
+      else
+        perform private.comp_try_begin(p_match);
+      end if;
+    end if;
   elsif v_status = 'active' then
     perform private.comp_do_forfeit(p_match, v_uid);
   end if;
@@ -1215,7 +1300,8 @@ end;
 $$;
 
 -- «Я здесь». Когда готовы все — жребий (места и слоты кона) и старт: ходит место 0, дедлайн хода 45 с.
--- Просроченная проверка готовности — отмена с возвратом (ошибки нет, статус cancelled).
+-- Срок вышел: нажавший с опозданием всё равно здесь — он засчитывается, дальше comp_ready_timeout
+-- (игра без остальных или отмена с возвратом; ошибки нет, статус active или cancelled).
 create or replace function public.comp_ready(p_match uuid) returns jsonb
   language plpgsql volatile security definer set search_path = ''
 as $$
@@ -1231,10 +1317,6 @@ begin
   end if;
   perform private.comp_require_member(p_match, v_uid);
 
-  if v_status = 'ready' and coalesce(v_rd < now(), false) then
-    perform private.comp_refund(p_match, 'not_ready');
-    return private.comp_state_json(p_match, v_uid);
-  end if;
   if v_status <> 'ready' then
     if v_status in ('active', 'settled', 'cancelled', 'void') then
       return private.comp_state_json(p_match, v_uid);
@@ -1244,17 +1326,10 @@ begin
 
   update public.comp_players p set ready = true, last_seen = now()
    where p.match_id = p_match and p.user_id = v_uid;
-  if not exists (select 1 from public.comp_players p where p.match_id = p_match and not p.ready) then
-    perform private.comp_deal(p_match);
-    update public.comp_matches m
-       set status = 'active',
-           current_seat = 0,
-           throw_no = 0,
-           started_at = now(),
-           turn_started_at = now(),
-           turn_deadline = now() + make_interval(secs => private.comp_turn_seconds()),
-           ready_deadline = null
-     where m.id = p_match;
+  if coalesce(v_rd < now(), false) then
+    perform private.comp_ready_timeout(p_match);
+  else
+    perform private.comp_try_begin(p_match);
   end if;
   return private.comp_state_json(p_match, v_uid);
 end;
@@ -1374,7 +1449,7 @@ end;
 $$;
 
 -- Уборка зависшего матча участником: active без изменений 15 мин — раздача по уже выбитому;
--- просроченные лобби и проверка готовности — возврат ставок.
+-- просроченные лобби и проверка готовности — как в comp_lazy_expire.
 create or replace function public.comp_settle_stale(p_match uuid) returns jsonb
   language plpgsql volatile security definer set search_path = ''
 as $$
@@ -1383,11 +1458,12 @@ declare
 begin
   perform private.comp_require_member(p_match, v_uid);
   perform private.comp_lazy_expire(p_match, true);
+  perform private.comp_require_member(p_match, v_uid); -- см. comp_rebind
   return private.comp_state_json(p_match, v_uid);
 end;
 $$;
 
--- Состояние матча. Попутно отменяет просроченное лобби или проверку готовности.
+-- Состояние матча. Попутно завершает просроченное лобби или проверку готовности.
 create or replace function public.comp_state(p_match uuid) returns jsonb
   language plpgsql volatile security definer set search_path = ''
 as $$
@@ -1399,6 +1475,7 @@ begin
   end if;
   perform private.comp_require_member(p_match, v_uid);
   perform private.comp_lazy_expire(p_match, false);
+  perform private.comp_require_member(p_match, v_uid); -- см. comp_rebind
   return private.comp_state_json(p_match, v_uid);
 end;
 $$;
@@ -1849,6 +1926,9 @@ revoke all on function private.comp_settle(uuid, text) from public, anon, authen
 revoke all on function private.comp_advance(uuid, interval) from public, anon, authenticated;
 revoke all on function private.comp_do_forfeit(uuid, uuid) from public, anon, authenticated;
 revoke all on function private.comp_deal(uuid) from public, anon, authenticated;
+revoke all on function private.comp_drop_player(uuid, uuid) from public, anon, authenticated;
+revoke all on function private.comp_try_begin(uuid) from public, anon, authenticated;
+revoke all on function private.comp_ready_timeout(uuid) from public, anon, authenticated;
 revoke all on function private.comp_lazy_expire(uuid, boolean) from public, anon, authenticated;
 revoke all on function private.comp_release_own(uuid) from public, anon, authenticated;
 revoke all on function private.comp_expire_stale(int) from public, anon, authenticated;

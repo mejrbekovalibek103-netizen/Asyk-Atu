@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { sound } from '../../game/audio/sound';
-import { getStakeLayout, STAKE_LAYOUTS, type StakeLayoutId } from '../../game/levels/matchLayouts';
+import { getStakeLayout, STAKE_LAYOUT_IDS, STAKE_LAYOUTS, type StakeLayoutId } from '../../game/levels/matchLayouts';
 import { PLAYER_STYLE } from '../../game/rules/MatchRules';
 import { signInWithGoogle, useAccount, type AccountState } from '../../net/account';
 import { freeCount, lockedMatches, STAKE_SIZE } from '../../net/collection';
@@ -198,11 +198,12 @@ function useMatchCodes(ids: string[]): { id: string; code: string; status: CompS
   return found;
 }
 
-/** Выбор кона матча на асыки: три раскладки, вид для двоих. */
-function StakeLayoutPicker({ value, onChange }: { value: StakeLayoutId; onChange: (id: StakeLayoutId) => void }) {
+/** Выбор кона матча на асыки. players — вид для стольких игроков; не задано (матч ещё не создан) — для двоих, с подписью о росте. */
+function StakeLayoutPicker({ value, players, onChange }: { value: StakeLayoutId; players?: number; onChange: (id: StakeLayoutId) => void }) {
+  const list = players === undefined ? STAKE_LAYOUTS : STAKE_LAYOUT_IDS.map((id) => getStakeLayout(id, players));
   return (
     <div className="layout-picker" role="radiogroup" aria-label="Кон матча">
-      {STAKE_LAYOUTS.map((l) => (
+      {list.map((l) => (
         <label key={l.id} className={`layout-option${value === l.id ? ' layout-option--on' : ''}`}>
           <input type="radio" name="comp-layout" value={l.id} checked={value === l.id} onChange={() => onChange(l.id as StakeLayoutId)} className="sr-only" />
           <span className="layout-option__preview">
@@ -213,7 +214,11 @@ function StakeLayoutPicker({ value, onChange }: { value: StakeLayoutId; onChange
               {l.name} <small>{l.kazName}</small>
             </b>
             <span>{l.description}</span>
-            <span className="layout-option__size">{asyks(l.asyks.length)}: по {STAKE_SIZE} от каждого</span>
+            <span className="layout-option__size">
+              {players === undefined
+                ? `${STAKE_SIZE * 2} асыков на двоих, ${STAKE_SIZE * 3} на троих, ${STAKE_SIZE * 4} на четверых`
+                : `${asyks(l.asyks.length)}: по ${STAKE_SIZE} от каждого`}
+            </span>
           </span>
         </label>
       ))}
@@ -286,7 +291,7 @@ export function CompetitiveSetupScreen({ defaultName, authError, onRememberName,
 
   return (
     <Page kicker="Онлайн игра" title="Матч на асыки" onBack={onBack}>
-      <p className="doc__lead">Двое ставят в кон по {STAKE_SIZE} асыков. Что выбьешь — твоё, невыбитые вернутся хозяину. Бросок считает сервер.</p>
+      <p className="doc__lead">От двух до четырёх игроков ставят в кон по {STAKE_SIZE} асыков. Что выбьешь — твоё, невыбитые вернутся хозяину. Бросок считает сервер.</p>
 
       {matches.map((m) => (
         <section key={m.id} className="lobby-card comp-active" aria-label="Матч, где стоят твои асыки">
@@ -338,7 +343,7 @@ export function CompetitiveSetupScreen({ defaultName, authError, onRememberName,
             <span className="sr-only">Твоё имя</span>
             <input type="text" value={name} maxLength={NAME_MAX} placeholder="Твоё имя" autoComplete="nickname" onChange={(e) => setName(e.target.value)} />
           </label>
-          <p className="setup__hint">Это имя увидит соперник.</p>
+          <p className="setup__hint">Это имя увидят соперники.</p>
         </fieldset>
 
         {joining ? (
@@ -410,7 +415,7 @@ interface LobbyProps {
 export function CompetitiveLobbyScreen(props: LobbyProps) {
   const { code, defaultName, authError, onMenu } = props;
   // пришли сюда кнопкой «Реванш» — ставка и жребий сами (см. rematchIntent.ts)
-  const [autoRematch] = useState(() => takeRematchIntent(code));
+  const [rematchCount] = useState(() => takeRematchIntent(code));
   const { state: account, reload } = useAccount();
   const [matchId, setMatchId] = useState<string | null>(null);
   const [joinError, setJoinError] = useState<unknown>(null);
@@ -453,7 +458,7 @@ export function CompetitiveLobbyScreen(props: LobbyProps) {
       <CompMatchRoom
         {...props}
         matchId={matchId}
-        autoRematch={autoRematch}
+        rematchCount={rematchCount}
         freeAsyks={account.status === 'signedIn' && account.asyks ? freeCount(account.asyks) : null}
         onReloadAccount={reload}
       />
@@ -492,7 +497,7 @@ export function CompetitiveLobbyScreen(props: LobbyProps) {
       c === 'not_found' || c === 'bad_code'
         ? 'Проверь код: возможно, матч уже закончился или его отменили.'
         : c === 'full'
-          ? 'В этом матче уже двое игроков.'
+          ? 'В этом матче уже четверо игроков.'
           : c === 'not_forming'
             ? 'Матч начался без тебя. Попроси друга создать новый.'
             : null;
@@ -569,20 +574,23 @@ function CompCodeCard({ code }: { code: string }) {
   );
 }
 
-/** Места в лобби: двое, у каждого — имя, ставка, готовность. */
+/** Места в лобби (до четырёх): имя, ставка; на проверке готовности — только те, кто в матче. */
 function CompSlots({ state, stage, onKick, kicking }: { state: CompState; stage: 'forming' | 'ready'; onKick?: (slot: number) => void; kicking: number | null }) {
   const max = state.match.maxPlayers;
-  const rows: (CompPlayer | null)[] = Array.from({ length: max }, (_, i) => state.players.find((p) => p.lobbySlot === i) ?? null);
+  const all: (CompPlayer | null)[] = Array.from({ length: max }, (_, i) => state.players.find((p) => p.lobbySlot === i) ?? null);
+  const rows = all.map((p, i) => ({ p, i })).filter(({ p }) => stage === 'forming' || p !== null);
+  const alone = state.players.length < 2;
+  const firstFree = rows.find(({ p }) => p === null)?.i;
   return (
     <ul className="lobby-slots comp-slots" aria-label="Игроки матча">
-      {rows.map((p, i) => {
+      {rows.map(({ p, i }) => {
         const color = PLAYER_STYLE[i]?.color ?? '#9aa0a6';
         const note = !p ? null : stage === 'ready' ? (p.ready ? 'на месте ✓' : 'ждём «Я здесь»…') : p.staked ? `ставка: ${STAKE_SIZE} ✓` : 'без ставки';
         return (
           <li key={i} className={`lobby-slot${p ? ' lobby-slot--on' : ' lobby-slot--empty'}`} style={{ '--player': color } as React.CSSProperties}>
             <AsykIcon palette={p ? PLAYER_STYLE[i].palette : 'saka'} size={28} ghost={!p} />
             <span className="lobby-slot__name">
-              {p ? p.name : 'Ждём соперника'}
+              {p ? p.name : alone && i === firstFree ? 'Ждём соперника' : 'Свободное место'}
               {note && <small className={`lobby-slot__note${(stage === 'ready' ? p?.ready : p?.staked) ? ' lobby-slot__note--ok' : ''}`}>{note}</small>}
             </span>
             {p?.isHost && <span className="lobby-slot__tag">хозяин</span>}
@@ -599,7 +607,7 @@ function CompSlots({ state, stage, onKick, kicking }: { state: CompState; stage:
   );
 }
 
-function CompMatchRoom(props: LobbyProps & { matchId: string; autoRematch: boolean; freeAsyks: number | null; onReloadAccount: () => void }) {
+function CompMatchRoom(props: LobbyProps & { matchId: string; rematchCount: number | null; freeAsyks: number | null; onReloadAccount: () => void }) {
   const match = useCompMatch(props.matchId);
   const { state, error } = match;
   const st = state?.match.status;
@@ -609,7 +617,7 @@ function CompMatchRoom(props: LobbyProps & { matchId: string; autoRematch: boole
   if (error)
     return (
       <Page kicker="Матч на асыки" title={error.code === 'not_member' ? 'Тебя нет в этом матче' : error.code === 'not_found' ? 'Матч не найден' : 'Матч не открыть'} onBack={props.onMenu} backLabel="В меню">
-        <p className="doc__lead">{error.code === 'not_member' ? 'Ты вышел из матча, или хозяин тебя убрал. Ставка вернулась в коллекцию.' : compText(error)}</p>
+        <p className="doc__lead">{error.code === 'not_member' ? 'Ты вышел, не подтвердил «Я здесь», или хозяин тебя убрал. Ставка вернулась в коллекцию.' : compText(error)}</p>
         <div className="doc__actions">
           <button className="btn btn--primary" onClick={props.onSetup}>
             <Icon name="globe" /> Новый матч
@@ -681,7 +689,7 @@ function CompMatchRoom(props: LobbyProps & { matchId: string; autoRematch: boole
   );
 }
 
-type RoomProps = LobbyProps & { matchId: string; autoRematch: boolean; freeAsyks: number | null; onReloadAccount: () => void; state: CompState; match: CompMatchView };
+type RoomProps = LobbyProps & { matchId: string; rematchCount: number | null; freeAsyks: number | null; onReloadAccount: () => void; state: CompState; match: CompMatchView };
 
 /** Выйти из лобби: хозяину — с подтверждением (матч отменится). */
 function useLeave(props: RoomProps) {
@@ -737,6 +745,9 @@ function FormingView(props: RoomProps) {
   const others = state.players.filter((p) => !p.isMe);
   const layout = getStakeLayout(state.match.layoutId, Math.max(2, state.players.length));
   const allStaked = state.players.length >= 2 && state.players.every((p) => p.staked);
+  const autoRematch = props.rematchCount !== null;
+  // реванш: пока не собралась вся прежняя компания, жребий сам не бросается (хозяин может начать и без остальных)
+  const missing = props.rematchCount === null ? 0 : Math.max(0, props.rematchCount - state.players.length);
 
   const run = async (kind: 'unstake' | 'start', fn: () => Promise<unknown>) => {
     sound.uiClick();
@@ -783,7 +794,7 @@ function FormingView(props: RoomProps) {
 
   // «Реванш»: своя ставка — сразу, без окна правил (их уже видели); не вышло — открываем окно с причиной
   useEffect(() => {
-    if (!props.autoRematch || me.staked || autoStaked.current || busy !== null) return;
+    if (!autoRematch || me.staked || autoStaked.current || busy !== null) return;
     autoStaked.current = true;
     void (async () => {
       setBusy('stake');
@@ -797,14 +808,14 @@ function FormingView(props: RoomProps) {
         setBusy(null);
       }
     })();
-  }, [props.autoRematch, me.staked, busy]);
+  }, [autoRematch, me.staked, busy]);
 
-  // «Реванш» у хозяина: оба поставили — жребий сам
+  // «Реванш» у хозяина: вся прежняя компания поставила — жребий сам
   useEffect(() => {
-    if (!props.autoRematch || !me.isHost || !allStaked || autoStarted.current || busy !== null) return;
+    if (!autoRematch || missing > 0 || !me.isHost || !allStaked || autoStarted.current || busy !== null) return;
     autoStarted.current = true;
     void run('start', () => match.actions.start());
-  }, [props.autoRematch, me.isHost, allStaked, busy]);
+  }, [autoRematch, missing, me.isHost, allStaked, busy]);
 
   const kick = async (slot: number) => {
     setKicking(slot);
@@ -823,9 +834,17 @@ function FormingView(props: RoomProps) {
     if (others.length === 0) status = <p className="lobby-status">Ждём соперника: отправь ему код или ссылку<span className="dots" aria-hidden="true" /></p>;
     else if (!me.staked) status = <p className="lobby-status">Поставь {STAKE_SIZE} асыков, чтобы начать.</p>;
     else if (!allStaked) status = <p className="lobby-status">Ждём ставку: {others.filter((p) => !p.staked).map((p) => p.name).join(', ')}<span className="dots" aria-hidden="true" /></p>;
+    else if (missing > 0)
+      status = (
+        <p className="lobby-status lobby-status--ready">
+          Реванш! Ждём ещё {missing} {plural(missing, ['игрока', 'игроков', 'игроков'])} — или начинай без них.
+        </p>
+      );
+    else if (state.players.length < state.match.maxPlayers)
+      status = <p className="lobby-status lobby-status--ready">Ставки сделаны: можно бросать жребий или подождать ещё друзей.</p>;
     else status = <p className="lobby-status lobby-status--ready">Ставки сделаны — можно бросать жребий!</p>;
-  } else if (props.autoRematch && me.staked) {
-    status = <p className="lobby-status">Реванш! Ждём соперника<span className="dots" aria-hidden="true" /></p>;
+  } else if (autoRematch && me.staked) {
+    status = <p className="lobby-status">Реванш! Ждём остальных<span className="dots" aria-hidden="true" /></p>;
   } else {
     status = me.staked ? (
       <p className="lobby-status">Ждём, пока хозяин бросит жребий<span className="dots" aria-hidden="true" /></p>
@@ -909,7 +928,7 @@ function FormingView(props: RoomProps) {
             Выбери кон
           </h2>
           <p className="modal__text">Ставки остаются: в любом коне по {STAKE_SIZE} асыков от каждого.</p>
-          <StakeLayoutPicker value={state.match.layoutId} onChange={(id) => void changeLayout(id)} />
+          <StakeLayoutPicker value={state.match.layoutId} players={Math.max(2, state.players.length)} onChange={(id) => void changeLayout(id)} />
           <button className="btn btn--ghost btn--block" onClick={() => setLayoutOpen(false)} disabled={busy === 'layout'}>
             Закрыть
           </button>
@@ -984,7 +1003,11 @@ function ReadyView(props: RoomProps) {
             {busy ? 'Отмечаем…' : 'Я здесь'}
           </button>
         )}
-        {left === 0 && <p className="lobby-status">Время вышло. Если не все на месте, матч отменится и ставки вернутся.</p>}
+        {left === 0 && (
+          <p className="lobby-status">
+            {state.players.length > 2 ? 'Время вышло. Играют те, кто на месте; остальным вернутся ставки.' : 'Время вышло. Если не все на месте, матч отменится и ставки вернутся.'}
+          </p>
+        )}
         {match.warning && <p className="setup__hint code-hint code-hint--error">{compText(match.warning)}</p>}
         {(error || leave.error) && (
           <p className="setup__hint code-hint code-hint--error" role="alert">
@@ -993,7 +1016,9 @@ function ReadyView(props: RoomProps) {
         )}
       </section>
       {leave.confirm && (
-        <LeaveModal text="Матч отменится, ставки вернутся всем." busy={leave.busy} onLeave={() => void leave.leave()} onClose={() => leave.setConfirm(false)} />
+        <LeaveModal
+          text={state.players.length > 2 ? 'Твоя ставка вернётся, остальные сыграют без тебя.' : 'Матч отменится, ставки вернутся всем.'}
+          busy={leave.busy} onLeave={() => void leave.leave()} onClose={() => leave.setConfirm(false)} />
       )}
     </Page>
   );

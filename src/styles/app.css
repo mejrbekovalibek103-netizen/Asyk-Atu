@@ -2292,6 +2292,14 @@ button {
   opacity: 0.75;
   white-space: nowrap;
 }
+/* трое в ряд на телефоне: место только имени, броскам и счёту */
+@media (max-width: 639px) {
+  .hud__stats--p3 .comp-card > svg,
+  .hud__stats--p3 .comp-card__word,
+  .hud__stats--p3 .player-card__me {
+    display: none;
+  }
+}
 .net-status--busy {
   background: var(--sky-50);
   color: var(--sky-600);
@@ -2319,6 +2327,39 @@ button {
   font-size: 14px;
   font-weight: 700;
   color: var(--ink-2);
+}
+.comp-standings {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  text-align: left;
+}
+.comp-standings__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-radius: 12px;
+  background: var(--bg);
+  font-size: 15px;
+}
+.comp-standings__row--me {
+  background: var(--sky-50);
+  font-weight: 700;
+}
+.comp-standings__place {
+  width: 18px;
+  font-weight: 800;
+  color: var(--muted);
+}
+.comp-standings__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .comp-result {
   margin-top: 12px;

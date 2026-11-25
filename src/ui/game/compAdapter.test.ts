@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { compStateFixture } from '../../game/rules/compFixture';
-import { parseCompState as parseView } from '../../game/rules/CompetitiveRules';
+import { STAKE_LAYOUT_IDS } from '../../game/levels/matchLayouts';
+import { compLayout, parseCompState as parseView } from '../../game/rules/CompetitiveRules';
 import { parseCompState } from '../../net/competitive';
 import { compStateToJson } from './compAdapter';
 
@@ -49,5 +50,28 @@ describe('compStateToJson', () => {
       slots: [],
     });
     expect(roundTrip(raw)).toEqual(parseView(raw));
+  });
+});
+
+describe('матч на четверых', () => {
+  const players = Array.from({ length: 4 }, (_, k) => ({ lobby_slot: k, seat: k, name: `Игрок ${k}`, is_host: k === 0, is_me: k === 2, staked: true, ready: true, forfeited: k === 1, active: true, throws: 3, real_throws: 3, knocked: k, best_combo: Math.min(1, k), skips_in_row: 0, seen_ago_ms: 500, online: true }));
+  const slots = Array.from({ length: 20 }, (_, k) => ({ slot: k, owner_seat: k % 4, knocked_by_seat: null, knocked_throw: null, mine: k % 4 === 2, asyk_id: k % 4 === 2 ? 100 + k : null }));
+  const raw = (layout: string) =>
+    compStateFixture({
+      match: { join_code: 'ABCDEFGHJK', layout_id: layout, players: 4, max_players: 4, kon_size: 20, throws_per_player: 10, current_seat: 3, throw_no: 11 },
+      me: { lobby_slot: 2, seat: 2, is_host: false, staked_ids: [102, 106, 110, 114, 118] },
+      players,
+      slots,
+    });
+
+  it('сеть и движок принимают состояние на любом коне', () => {
+    for (const id of STAKE_LAYOUT_IDS) {
+      const st = parseCompState(raw(id));
+      expect(st).not.toBeNull();
+      const v = parseView(compStateToJson(st!));
+      expect(v).toEqual(parseView(raw(id)));
+      expect(v?.players).toBe(4);
+      expect(compLayout(v!).asyks).toHaveLength(20);
+    }
   });
 });

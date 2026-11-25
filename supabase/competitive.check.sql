@@ -53,6 +53,9 @@ declare
   v_bool boolean;
   v_detail text;
   v_rev int;
+  v_txt text;
+  v_u uuid;
+  v_m3x uuid;
 begin
   begin -- всё внутри откатывается в конце
     -- ——— подготовка: 5 тестовых пользователей Google ———
@@ -122,6 +125,9 @@ begin
         format('select private.comp_settle(%L::uuid, %L)', v_m, 'x'),
         format('select private.comp_refund(%L::uuid, %L)', v_m, 'x'),
         format('select private.comp_deal(%L::uuid)', v_m),
+        format('select private.comp_drop_player(%L::uuid, %L::uuid)', v_m, v_b),
+        format('select private.comp_try_begin(%L::uuid)', v_m),
+        format('select private.comp_ready_timeout(%L::uuid)', v_m),
         format('select private.comp_advance(%L::uuid, interval %L)', v_m, '0 seconds'),
         format('select private.comp_do_forfeit(%L::uuid, %L::uuid)', v_m, v_a),
         format('select private.comp_state_json(%L::uuid, %L::uuid)', v_m, v_b),
@@ -1043,12 +1049,13 @@ begin
     v_names := array_append(v_names, '15. Пульс и пропуск отсутствующего через 20 с'::text);
     v_oks := array_append(v_oks, v_ok); v_infos := array_append(v_infos, v_info);
 
-    -- ——— 16. Третий игрок не может войти ———
+    -- ——— 16. Четверо входят, пятый — нет ———
     v_ok := true; v_info := '';
     begin
-      if private.comp_max_players() <> 2 then
-        v_ok := false; v_info := v_info || ' [comp_max_players не 2]';
+      if private.comp_max_players() <> 4 then
+        v_ok := false; v_info := v_info || ' [comp_max_players не 4]';
       end if;
+      perform private.comp_settle(v_m, 'test');   -- A и B свободны
       perform set_config('request.jwt.claims', v_jc, true);
       set local role authenticated;
       v_r := public.comp_open('stake-scatter', '1111111111111111', 'Сәкен');
@@ -1060,14 +1067,21 @@ begin
         v_ok := false; v_info := v_info || ' [второй игрок не на месте 1]';
       end if;
       perform set_config('request.jwt.claims', v_jd, true);
+      v_r := public.comp_join(v_code2, '3333333333333333', 'Дана');
+      perform set_config('request.jwt.claims', v_ja, true);
+      v_r2 := public.comp_join(v_code2, '0123456789abcdef', 'Асан');
+      if (v_r ->> 'lobby_slot')::int <> 2 or (v_r2 ->> 'lobby_slot')::int <> 3 then
+        v_ok := false; v_info := v_info || ' [третий и четвёртый не на местах 2 и 3]';
+      end if;
+      perform set_config('request.jwt.claims', v_jb, true);
       v_msg := null;
-      begin perform public.comp_join(v_code2, '3333333333333333', 'Дана'); exception when others then v_msg := sqlerrm; end;
+      begin perform public.comp_join(v_code2, 'fedcba9876543210', 'Бек'); exception when others then v_msg := sqlerrm; end;
       reset role;
       if v_msg is distinct from 'full' then
-        v_ok := false; v_info := v_info || ' [третий: ' || coalesce(v_msg, 'вошёл') || ']';
+        v_ok := false; v_info := v_info || ' [пятый: ' || coalesce(v_msg, 'вошёл') || ']';
       end if;
-      if (select count(*) from public.comp_players p where p.match_id = v_m2) <> 2 then
-        v_ok := false; v_info := v_info || ' [игроков не 2]';
+      if (select count(*) from public.comp_players p where p.match_id = v_m2) <> 4 then
+        v_ok := false; v_info := v_info || ' [игроков не 4]';
       end if;
       raise exception 'comp_check_rollback';
     exception when others then
@@ -1075,7 +1089,7 @@ begin
         v_ok := false; v_info := v_info || ' ошибка: ' || sqlstate || ' ' || sqlerrm;
       end if;
     end;
-    v_names := array_append(v_names, '16. Третий игрок не может войти'::text);
+    v_names := array_append(v_names, '16. Четверо входят, пятый — нет'::text);
     v_oks := array_append(v_oks, v_ok); v_infos := array_append(v_infos, v_info);
 
     -- ——— 17. Закрытый канал Realtime и публикация ———
@@ -1359,6 +1373,234 @@ begin
     v_names := array_append(v_names, '21. Смена кона в лобби'::text);
     v_oks := array_append(v_oks, v_ok); v_infos := array_append(v_infos, v_info);
 
+    -- ——— 22. Матч на четверых: кон 20, очередь по кругу, сдача одного, раздача ———
+    v_ok := true; v_info := '';
+    begin
+      perform private.comp_settle(v_m, 'test');   -- A и B свободны
+      insert into public.asyks (owner) select v_d from generate_series(1, 6);
+      perform set_config('request.jwt.claims', v_jc, true);
+      set local role authenticated;
+      v_r := public.comp_open('stake-ring', '1111111111111111', 'Сәкен');
+      v_m2 := (v_r ->> 'match_id')::uuid;
+      v_code2 := v_r ->> 'join_code';
+      foreach v_txt in array array[v_jc, v_je, v_jd, v_ja] loop
+        perform set_config('request.jwt.claims', v_txt, true);
+        if v_txt <> v_jc then
+          perform public.comp_join(v_code2, '2222222222222222', 'Игрок');
+        end if;
+        perform public.comp_stake(v_m2);
+      end loop;
+      perform set_config('request.jwt.claims', v_jc, true);
+      v_r := public.comp_start(v_m2);
+      if (v_r -> 'match' ->> 'players')::int <> 4 or (v_r -> 'match' ->> 'kon_size')::int <> 20
+         or (v_r -> 'match' ->> 'throws_per_player')::int <> 10 then
+        v_ok := false; v_info := v_info || ' [не 4 игрока, 20 асыков, 10 бросков]';
+      end if;
+      foreach v_txt in array array[v_jc, v_je, v_jd, v_ja] loop
+        perform set_config('request.jwt.claims', v_txt, true);
+        v_r := public.comp_ready(v_m2);
+      end loop;
+      reset role;
+      if v_r -> 'match' ->> 'status' <> 'active' or jsonb_array_length(v_r -> 'slots') <> 20
+         or (select count(*) from jsonb_array_elements(v_r -> 'slots') as e(x) where (e.x ->> 'mine')::boolean) <> 5
+         or (select array_agg(p.seat::int order by p.seat) from public.comp_players p where p.match_id = v_m2) <> array[0, 1, 2, 3]
+         or (select array_agg(s.slot::int order by s.slot) from public.comp_stakes s where s.match_id = v_m2)
+            <> array(select generate_series(0, 19)) then
+        raise exception 'матч на четверых не начался правильно';
+      end if;
+      if exists (select 1 from unnest(array[v_a, v_c, v_d, v_e]) as u(id) where position(u.id::text in v_r::text) > 0) then
+        v_ok := false; v_info := v_info || ' [uuid игрока в comp_state]';
+      end if;
+
+      -- место 2 сдаётся не в свой ход: очередь не меняется
+      select p.user_id into v_u from public.comp_players p where p.match_id = v_m2 and p.seat = 2;
+      perform set_config('request.jwt.claims',
+        case v_u when v_a then v_ja when v_c then v_jc when v_d then v_jd else v_je end, true);
+      set local role authenticated;
+      perform public.comp_forfeit(v_m2);
+      reset role;
+      if (select m.current_seat from public.comp_matches m where m.id = v_m2) <> 0 then
+        v_ok := false; v_info := v_info || ' [сдача не в свой ход сменила ход]';
+      end if;
+
+      -- места 0, 1, 3, 0: каждый выбивает по одному ещё стоящему асыку; место 2 пропускается
+      v_n := 0;
+      foreach v_i in array array[0, 1, 3, 0] loop
+        v_n := v_n + 1;
+        if (select m.current_seat from public.comp_matches m where m.id = v_m2) <> v_i then
+          v_ok := false; v_info := v_info || ' [бросок ' || v_n || ': ходит место '
+            || (select m.current_seat from public.comp_matches m where m.id = v_m2) || ', а не ' || v_i || ']';
+        end if;
+        select p.user_id into v_u from public.comp_players p where p.match_id = v_m2 and p.seat = v_i;
+        -- чужой асык (не свой)
+        select min(s.slot) into v_slot from public.comp_stakes s
+        where s.match_id = v_m2 and s.knocked_by_seat is null and s.owner_seat <> v_i;
+        select jsonb_agg(jsonb_build_array(s.slot, 100 + s.slot, 300, 0,
+                 case when s.knocked_by_seat is not null or s.slot = v_slot then 0 else 1 end) order by s.slot)
+          into v_final
+        from public.comp_stakes s where s.match_id = v_m2;
+        perform set_config('request.jwt.claims', v_jsrv, true);
+        set local role service_role;
+        v_r := public.comp_begin_throw(v_m2, v_u, v_n);
+        if (v_r ->> 'players')::int <> 4 then
+          v_ok := false; v_info := v_info || ' [comp_begin_throw: игроков не 4]';
+        end if;
+        perform public.comp_apply_throw(v_m2, v_u, v_n, 0.0, 0.9, v_r -> 'kon_state', v_final, array[v_slot], 60);
+        reset role;
+      end loop;
+
+      perform private.comp_settle(v_m2, 'test');
+      if (select count(*) from public.asyk_transfers t where t.match_id = v_m2) <> 4
+         or exists (
+           select 1 from public.comp_stakes s
+           join public.asyks a on a.id = s.asyk_id
+           left join public.comp_players p on p.match_id = s.match_id and p.seat = s.knocked_by_seat
+           where s.match_id = v_m2 and (a.owner <> coalesce(p.user_id, s.owner_user) or a.locked_match is not null))
+         -- после раздачи асыков в сумме столько же: 10 · 4 и ничего не создано и не пропало
+         or (select count(*) from public.asyks a where a.owner in (v_a, v_c, v_d, v_e)) <> 40 then
+        v_ok := false; v_info := v_info || ' [раздача на четверых]';
+      end if;
+
+      -- реванш той же компанией: одно лобби на всех, места 0..3
+      v_ids := '{}';
+      foreach v_txt in array array[v_jd, v_ja, v_jc, v_je] loop
+        perform set_config('request.jwt.claims', v_txt, true);
+        set local role authenticated;
+        v_r := public.comp_rematch(v_m2, '2222222222222222');
+        reset role;
+        v_ids := v_ids || (v_r ->> 'lobby_slot')::bigint;
+        v_m3 := coalesce(v_m3x, (v_r ->> 'match_id')::uuid);
+        v_m3x := v_m3;
+        if (v_r ->> 'match_id')::uuid <> v_m3 then
+          v_ok := false; v_info := v_info || ' [реванш: больше одного лобби]';
+        end if;
+      end loop;
+      if v_ids <> array[0, 1, 2, 3]::bigint[] then
+        v_ok := false; v_info := v_info || ' [реванш: места ' || v_ids::text || ']';
+      end if;
+      raise exception 'comp_check_rollback';
+    exception when others then
+      if sqlerrm <> 'comp_check_rollback' then
+        v_ok := false; v_info := v_info || ' ошибка: ' || sqlstate || ' ' || sqlerrm;
+      end if;
+    end;
+    v_names := array_append(v_names, '22. Матч на четверых'::text);
+    v_oks := array_append(v_oks, v_ok); v_infos := array_append(v_infos, v_info);
+
+    -- ——— 23. Проверка готовности втроём: вышедший и не подтвердивший не срывают матч ———
+    v_ok := true; v_info := '';
+    begin
+      perform private.comp_settle(v_m, 'test');   -- A и B свободны
+      -- а) A вышел, когда C и E уже подтвердили: матч начинается вдвоём, ставка A вернулась
+      perform set_config('request.jwt.claims', v_jc, true);
+      set local role authenticated;
+      v_r := public.comp_open('stake-line', '1111111111111111', 'Сәкен');
+      v_m2 := (v_r ->> 'match_id')::uuid;
+      v_code2 := v_r ->> 'join_code';
+      perform public.comp_stake(v_m2);
+      foreach v_txt in array array[v_je, v_ja] loop
+        perform set_config('request.jwt.claims', v_txt, true);
+        perform public.comp_join(v_code2, '2222222222222222', 'Игрок');
+        perform public.comp_stake(v_m2);
+      end loop;
+      perform set_config('request.jwt.claims', v_jc, true);
+      perform public.comp_start(v_m2);
+      perform public.comp_ready(v_m2);
+      perform set_config('request.jwt.claims', v_je, true);
+      perform public.comp_ready(v_m2);
+      perform set_config('request.jwt.claims', v_ja, true);
+      perform public.comp_leave(v_m2);
+      perform set_config('request.jwt.claims', v_jc, true);
+      v_r := public.comp_state(v_m2);
+      -- вернуться в этот матч вышедший уже не может
+      perform set_config('request.jwt.claims', v_ja, true);
+      v_msg := null;
+      begin perform public.comp_join(v_code2, '2222222222222222', 'Асан'); exception when others then v_msg := sqlerrm; end;
+      reset role;
+      if v_r -> 'match' ->> 'status' <> 'active' or (v_r -> 'match' ->> 'players')::int <> 2
+         or jsonb_array_length(v_r -> 'slots') <> 10
+         or exists (select 1 from public.asyks a where a.owner = v_a and a.locked_match is not null) then
+        v_ok := false; v_info := v_info || ' [выход на проверке: ' || coalesce(v_r -> 'match' ->> 'status', '?') || ']';
+      end if;
+      if v_msg is distinct from 'not_forming' then
+        v_ok := false; v_info := v_info || ' [вышедший вернулся: ' || coalesce(v_msg, 'вошёл') || ']';
+      end if;
+      perform private.comp_settle(v_m2, 'test');
+
+      -- б) A не подтвердил, срок вышел, C и E в сети: играют вдвоём; A — уже не участник
+      perform set_config('request.jwt.claims', v_jc, true);
+      set local role authenticated;
+      v_r := public.comp_open('stake-line', '1111111111111111', 'Сәкен');
+      v_m2 := (v_r ->> 'match_id')::uuid;
+      v_code2 := v_r ->> 'join_code';
+      perform public.comp_stake(v_m2);
+      foreach v_txt in array array[v_je, v_ja] loop
+        perform set_config('request.jwt.claims', v_txt, true);
+        perform public.comp_join(v_code2, '2222222222222222', 'Игрок');
+        perform public.comp_stake(v_m2);
+      end loop;
+      perform set_config('request.jwt.claims', v_jc, true);
+      perform public.comp_start(v_m2);
+      perform public.comp_ready(v_m2);
+      perform set_config('request.jwt.claims', v_je, true);
+      perform public.comp_ready(v_m2);
+      reset role;
+      update public.comp_matches m set ready_deadline = now() - interval '1 second' where m.id = v_m2;
+      -- сам неподтвердивший состояние уже не получает
+      perform set_config('request.jwt.claims', v_ja, true);
+      set local role authenticated;
+      v_msg := null;
+      begin perform public.comp_state(v_m2); exception when others then v_msg := sqlerrm; end;
+      perform set_config('request.jwt.claims', v_je, true);
+      v_r := public.comp_state(v_m2);
+      reset role;
+      if v_msg is distinct from 'not_member' then
+        v_ok := false; v_info := v_info || ' [неподтвердивший: ' || coalesce(v_msg, 'получил состояние') || ']';
+      end if;
+      if v_r -> 'match' ->> 'status' <> 'active' or (v_r -> 'match' ->> 'players')::int <> 2
+         or exists (select 1 from public.asyks a where a.owner = v_a and a.locked_match is not null)
+         or exists (select 1 from public.comp_players p where p.match_id = v_m2 and p.user_id = v_a) then
+        v_ok := false; v_info := v_info || ' [срок вышел: ' || coalesce(v_r -> 'match' ->> 'status', '?') || ']';
+      end if;
+      perform private.comp_settle(v_m2, 'test');
+
+      -- в) подтвердившие давно не в сети: забытый матч не запускается, ставки возвращаются всем
+      perform set_config('request.jwt.claims', v_jc, true);
+      set local role authenticated;
+      v_r := public.comp_open('stake-line', '1111111111111111', 'Сәкен');
+      v_m2 := (v_r ->> 'match_id')::uuid;
+      v_code2 := v_r ->> 'join_code';
+      perform public.comp_stake(v_m2);
+      foreach v_txt in array array[v_je, v_ja] loop
+        perform set_config('request.jwt.claims', v_txt, true);
+        perform public.comp_join(v_code2, '2222222222222222', 'Игрок');
+        perform public.comp_stake(v_m2);
+      end loop;
+      perform set_config('request.jwt.claims', v_jc, true);
+      perform public.comp_start(v_m2);
+      perform public.comp_ready(v_m2);
+      perform set_config('request.jwt.claims', v_je, true);
+      perform public.comp_ready(v_m2);
+      reset role;
+      update public.comp_matches m set ready_deadline = now() - interval '1 hour' where m.id = v_m2;
+      update public.comp_players p set last_seen = now() - interval '1 hour' where p.match_id = v_m2 and p.user_id <> v_c;
+      perform set_config('request.jwt.claims', v_jc, true);
+      set local role authenticated;
+      v_r := public.comp_state(v_m2);
+      reset role;
+      if v_r -> 'match' ->> 'status' <> 'cancelled'
+         or exists (select 1 from public.asyks a where a.owner in (v_a, v_c, v_e) and a.locked_match is not null) then
+        v_ok := false; v_info := v_info || ' [забытый матч: ' || coalesce(v_r -> 'match' ->> 'status', '?') || ']';
+      end if;
+      raise exception 'comp_check_rollback';
+    exception when others then
+      if sqlerrm <> 'comp_check_rollback' then
+        v_ok := false; v_info := v_info || ' ошибка: ' || sqlstate || ' ' || sqlerrm;
+      end if;
+    end;
+    v_names := array_append(v_names, '23. Проверка готовности втроём'::text);
+    v_oks := array_append(v_oks, v_ok); v_infos := array_append(v_infos, v_info);
+
     raise exception 'comp_check_rollback'; -- откат всех тестовых данных
   exception when others then
     if sqlerrm <> 'comp_check_rollback' then
@@ -1393,7 +1635,7 @@ begin
   if v_fail is not null then
     raise exception 'competitive.check: FAIL — %', v_fail;
   end if;
-  if v_total < 21 then
+  if v_total < 23 then
     raise exception 'competitive.check: FAIL — выполнено сценариев: %', v_total;
   end if;
   raise notice 'ALL PASS';

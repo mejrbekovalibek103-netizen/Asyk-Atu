@@ -36,7 +36,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const bool = (v: unknown): boolean | null => (typeof v === 'boolean' ? v : null);
 
-/** Игроков в матче (схема готова к 3–4, первая версия — 2). */
+/** Игроков в матче: от двух до четырёх (private.comp_max_players). */
 const MAX_COMP_PLAYERS = 4;
 /** Номер броска: в матче их не больше 15 × 2 (пропуски тоже занимают номер), предел с запасом — как у сервера. */
 const MAX_THROW_NO = 9_999;

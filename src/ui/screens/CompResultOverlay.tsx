@@ -12,7 +12,7 @@ import { plural } from '../format';
 interface Props {
   state: CompState;
   /**
-   * «Реванш» (сразу ставка и старт, как только оба готовы) или «В комнату» (лобби, где хозяин может сменить кон).
+   * «Реванш» (сразу ставка и старт, как только готовы все) или «В комнату» (лобби, где хозяин может сменить кон).
    * Промис — переход в лобби следующего матча; отказ — текст ошибки показывается здесь же.
    */
   onRematch: (kind: 'rematch' | 'room') => Promise<void>;
@@ -57,6 +57,11 @@ export function deltaText(delta: number): string {
   return delta > 0 ? `+${delta}` : delta < 0 ? `−${-delta}` : '0';
 }
 
+/** Места по числу выбитых: поровну — одно место (1, 1, 3). */
+export function placesByKnocked<T extends { knocked: number }>(players: readonly T[]): { p: T; place: number }[] {
+  return [...players].sort((a, b) => b.knocked - a.knocked).map((p) => ({ p, place: 1 + players.filter((x) => x.knocked > p.knocked).length }));
+}
+
 /** Асыки одного раздела итогов: цвет — хозяина асыка (как тамга в коне). */
 function SlotIcons({ state, list, label }: { state: CompState; list: number[]; label: string }) {
   if (!list.length) return <p className="comp-result__empty">—</p>;
@@ -83,6 +88,8 @@ export function CompResultOverlay({ state, onRematch, onCollection, onMenu, erro
   const r = state.result;
   const me = state.players.find((p) => p.isMe) ?? null;
   const others = state.players.filter((p) => !p.isMe);
+  const many = state.players.length > 2;
+  const standings = placesByKnocked(state.players);
   const reason = compEndText(state.match.endReason, !!r?.refunded);
 
   let title = 'Считаем итоги…';
@@ -126,7 +133,24 @@ export function CompResultOverlay({ state, onRematch, onCollection, onMenu, erro
         </p>
       )}
 
-      {me && others.length > 0 && !r?.refunded && (
+      {many && !r?.refunded && (
+        <ol className="comp-standings" aria-label="Кто сколько выбил">
+          {standings.map(({ p, place }) => (
+            <li key={p.lobbySlot} className={`comp-standings__row${p.isMe ? ' comp-standings__row--me' : ''}`}>
+              <span className="comp-standings__place">{place}</span>
+              <AsykIcon size={22} palette={p.seat === null ? 'bone' : PLAYER_STYLE[p.seat].palette} />
+              <span className="comp-standings__name">
+                {p.name}
+                {p.isMe && <small> · ты</small>}
+                {p.forfeited && <small> · не доиграл</small>}
+              </span>
+              <b>{p.knocked}</b>
+            </li>
+          ))}
+        </ol>
+      )}
+
+      {!many && me && others.length > 0 && !r?.refunded && (
         <p className="comp-result__score">
           Ты выбил {asyks(me.knocked)} · {others.map((p) => `${p.name}: ${p.knocked}`).join(' · ')}
         </p>
@@ -149,7 +173,7 @@ export function CompResultOverlay({ state, onRematch, onCollection, onMenu, erro
           {!r.refunded && (
             <section className="comp-result__part comp-result__part--lost">
               <h3>Ушли</h3>
-              <p className="comp-result__hint">Твои асыки, выбитые соперником: {r.lost.length}</p>
+              <p className="comp-result__hint">Твои асыки, выбитые {many ? 'соперниками' : 'соперником'}: {r.lost.length}</p>
               <SlotIcons state={state} list={r.lost} label="Ушли" />
             </section>
           )}
@@ -164,7 +188,7 @@ export function CompResultOverlay({ state, onRematch, onCollection, onMenu, erro
 
       {called && busy === null && (
         <p className="lobby-status lobby-status--ready comp-rematch-call" role="status">
-          Соперник зовёт на реванш!
+          {many ? 'Тебя зовут на реванш!' : 'Соперник зовёт на реванш!'}
         </p>
       )}
       {!canRematch && (

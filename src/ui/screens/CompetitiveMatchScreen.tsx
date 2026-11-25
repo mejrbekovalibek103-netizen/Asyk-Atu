@@ -278,7 +278,8 @@ function CompGame(props: Props & { bootRaw: unknown; bootView: CompView }) {
                       {me && <small className="player-card__me"> · ты</small>}
                     </span>
                     <small className="comp-card__throws">
-                      броски {Math.min(hp?.throws ?? 0, state.match.throwsPerPlayer)}/{state.match.throwsPerPlayer}
+                      <span className="comp-card__word">броски </span>
+                      {Math.min(hp?.throws ?? 0, state.match.throwsPerPlayer)}/{state.match.throwsPerPlayer}
                     </small>
                   </span>
                   <b className="player-card__score bump" key={hp?.knocked}>
@@ -347,7 +348,7 @@ function CompGame(props: Props & { bootRaw: unknown; bootView: CompView }) {
             Сдаться?
           </h2>
           <p className="modal__text">
-            Бросать ты больше не сможешь. Твои асыки останутся в коне — соперник может их выбить. Невыбитые вернутся к тебе после матча.
+            Бросать ты больше не сможешь. Твои асыки останутся в коне — {n > 2 ? 'соперники могут' : 'соперник может'} их выбить. Невыбитые вернутся к тебе после матча.
           </p>
           <div className="stack">
             <button className="btn btn--primary btn--block" onClick={() => setConfirmForfeit(false)} disabled={forfeiting} data-autofocus>
@@ -366,7 +367,7 @@ function CompGame(props: Props & { bootRaw: unknown; bootView: CompView }) {
           errorText={compText}
           onRematch={async (kind) => {
             const r = await match.actions.rematch();
-            if (kind === 'rematch') markRematchIntent(r.joinCode);
+            if (kind === 'rematch') markRematchIntent(r.joinCode, n);
             props.onOpenMatch(r.joinCode);
           }}
           onCollection={props.onCollection}

@@ -152,7 +152,7 @@ export function RatingScreen({ authError }: Props) {
                 </ol>
               )}
               <p className="doc__muted rating-note">
-                Игроков: {board.total}. Победа — в матче на асыки выбил больше соперника; ничья и сдача не считаются.
+                Игроков: {board.total}. Победа — в матче на асыки выбил больше каждого соперника; ничья и сдача не считаются.
               </p>
             </>
           )}
